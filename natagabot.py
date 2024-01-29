@@ -128,23 +128,23 @@ def calculate_and_send_course_info(chat_id, data2):
     # الدورة الأولى (2022-2023)
     first_semester_2022_2023 = data2["StuSemesterData"][0]["Semesters"][0]
     total_credits_2022_2023, message_2022_2023 = print_course_info(first_semester_2022_2023["Courses"], "اولي ترم اول (2022-2023)")
-    bot.send_message(chat_id, message_2022_2023)
-    bot.send_message(chat_id, f"\nالساعات المسجلة: {first_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {first_semester_2022_2023['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2022_2023['GPA']}        المعدل التراكمي: {first_semester_2022_2023['CurrGPA']}")
+    bot.send_message(chat_id, f"{message_2022_2023}\nالساعات المسجلة: {first_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {first_semester_2022_2023['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2022_2023['GPA']}        المعدل التراكمي: {first_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
+
 
     # الدورة الثانية (2022-2023)
     second_semester_2022_2023 = data2["StuSemesterData"][0]["Semesters"][1]
     total_credits_2022_2023 += print_course_info(second_semester_2022_2023["Courses"], "اولي ترم تاني (2022-2023)")[0]
     message_2022_20232= "\n\n" + print_course_info(second_semester_2022_2023["Courses"], "اولي ترم تاني (2022-2023)")[1]
-    bot.send_message(chat_id, message_2022_20232)
+    bot.send_message(chat_id, f"{message_2022_20232}\nالساعات المسجلة: {second_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {second_semester_2022_2023['EarnedHrs']}\nالمعدل الفصلي: {second_semester_2022_2023['GPA']}        المعدل التراكمي: {second_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
 
-    bot.send_message(chat_id, f"\nالساعات المسجلة: {second_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {second_semester_2022_2023['EarnedHrs']}\nالمعدل الفصلي: {second_semester_2022_2023['GPA']}        المعدل التراكمي: {second_semester_2022_2023['CurrGPA']}")
+    
 
     # الدورة الأولى (2023-2024)
     first_semester_2023_2024 = data2["StuSemesterData"][1]["Semesters"][0]
     total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تانية ترم اول (2023-2024)")
-    bot.send_message(chat_id, message_2023_2024)
-    bot.send_message(chat_id, f"\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
+    bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
 
+    
 def print_course_info(course_data, semester_name):
     message_text = f"\n{semester_name}:\n"
     message_text += "اسم المقرر  | الساعات المعتمدة | التقدير |\n"
@@ -157,7 +157,7 @@ def print_course_info(course_data, semester_name):
         course_credit = int(course["CourseCredit"])
         grade = course.get("Grade", "unannounced")
         total_credits += course_credit
-        message_text += f"•{course_name} 🔸 {course_credit} 🔸{grade} \n"
+        message_text += f"•[{course_name} ] [{course_credit}] [{grade}] \n"
 
     return total_credits, message_text
 
