@@ -29,3 +29,4 @@ def welcome(message):
                       , parse_mode='Markdown', reply_markup=keyboard)
     bot.reply_to(message, "البوت تحت الصيانة برجاء المحاولة لاحقا")
 
+bot.polling()
