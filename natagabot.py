@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 
 admin_chat_id = 1792449471
 
-dev = types.InlineKeyboardButton(text="𝑴𝒊𝒏𝒊𝒂 𝑨𝒈𝒓𝒊𝒄𝒖𝒍𝒕𝒖𝒓𝒆🌸🌾 ", url='https://t.me/+rbphVRSaWD9mNjg8')
+dev = types.InlineKeyboardButton(text="𓆩⋆ ׅᎯL ׅG̸E🅽ᎬRᎪⱠ ׅ⋆𓆪 ", url='https://t.me/BO_R0')
 btn = types.InlineKeyboardMarkup()
 btn.row_width = 1
 btn.add(dev)
