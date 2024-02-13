@@ -1,4 +1,4 @@
-import telebot
+import telebot,os
 from telebot import types
 import requests
 import json
