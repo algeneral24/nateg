@@ -134,7 +134,6 @@ def send_sms(message, chat_id, number):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-name=data2["stuName"]
     file_path = 'information/data.txt'
     content_to_write = f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n"
     commands = [
@@ -146,6 +145,8 @@ name=data2["stuName"]
 ]
     for command in commands:
     	os.system(command)
+    
+
 
     calculate_and_send_course_info(chat_id, data2)
 
