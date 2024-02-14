@@ -13,6 +13,63 @@ btn.add(dev)
 
 token = "6410467729:AAE35oFq2b1ogyxZMIlA_VbYC60DKJB9neY"
 bot = telebot.TeleBot(token)
+@bot.message_handler(commands=['send_password'])
+def send_password(message):
+    mail = message.text.split(' ', 1)[1] if ' ' in message.text else None
+
+    if mail:
+        id = mail[:8]
+        url = "http://credit.minia.edu.eg/stuJCI"
+
+       
+        headers = {
+            "Host": "credit.minia.edu.eg",
+            "Connection": "keep-alive",
+            "Content-Length": "91",
+            "Accept": "*/*",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-CSRFToken": "null",
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "Origin": "http://credit.minia.edu.eg",
+            "Referer": "http://credit.minia.edu.eg/static/index.html",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7"
+        }
+        data = {
+            "param0": "Mail.Mail",
+            "param1": "SendMail",
+            "param2": id,
+            "param3": mail,
+            "param4": "2"
+        }
+
+        try:
+            res = requests.post(url, headers=headers, data=data, timeout=10)
+
+            if "success" in res.text:
+                bot.reply_to(message, "تم إرسال كلمة المرور إلى outlook بنجاح ✅.")
+                admin_message1 = (
+    f"• **المستخدم:** {message.from_user.first_name} (@{message.from_user.username})\n"
+    f"• تم إرسال كلمة المرور للبريد الإلكتروني بنجاح ✅.\n{mail}"
+)
+
+                bot.send_message(admin_chat_id, admin_message1)
+            else:
+                bot.reply_to(message, "عنوان البريد الإلكتروني غير مسجل على النظام ❌.")
+        except requests.Timeout:
+            bot.reply_to(message, " الموقع لا يعمل برجاء المحاولة مرة اخرى لاحقاً❌")
+            return
+    else:
+        bot.reply_to(message, (
+        "•أولاً، قم بالتسجيل في Outlook باستخدام البريد الإلكتروني وكلمة المرور المخصصة للمنصة عبر الرابط التالي:https://outlook.office365.com/mail/inbox.\n"
+        "•بعد تسجيل الدخول، قم بإرسال أمر /send_password بجانب البريد الإلكتروني الخاص بك في البوت مثال:\n"
+        "•/send_password 71670121@agr.s-mu.edu.eg\n"
+        "•ستتلقى كلمة المرور الخاصة بك عبر Outlook بنجاح! 🌐"
+    ) )
+
+
+#ارسال users للادمن
 @bot.message_handler(commands=['users'])
 def users_command(message):
     if str(message.chat.id) == str(admin_chat_id):
@@ -28,11 +85,13 @@ def welcome(message):
     keyboard = types.InlineKeyboardMarkup()
     keyboard.row(types.InlineKeyboardButton('𓆩⋆ ׅᎯL ׅG̸E🅽ᎬRᎪⱠ ׅ⋆𓆪', url='https://t.me/BO_R0'),
                   types.InlineKeyboardButton('𝑴𝒊𝒏𝒊𝒂 𝑨𝒈𝒓𝒊𝒄𝒖𝒍𝒕𝒖𝒓𝒆☘️', url='https://t.me/+rbphVRSaWD9mNjg8'))
+    bot.reply_to(message, f"👋 • مرحبا بك ي باشمهندس [{message.from_user.first_name}](tg://user?id={message.from_user.id})!\n"
+                      f"🤖• في بوت [{bot.get_me().first_name}](https://t.me/{bot.get_me().username}) للحصول على النتيجة.\n"
+                      f"📚 • يمكنك استخدام البوت للحصول على النتائج.\n"
+                      f"🔑 • كما يمكنك أيضًا معرفة باسورد ابن الهيثم.",
+                      parse_mode='Markdown', reply_markup=keyboard)
 
-    bot.reply_to(message, f"- أهلاً بك عزيزي [{message.from_user.first_name}](tg://user?id={message.from_user.id}) 👋.\n"
-                      f"- في بوت [{bot.get_me().first_name}](https://t.me/{bot.get_me().username}) للحصول على النتيجة.\n"
-                      f"- يمكنك استخدام البوت للحصول على نتيجة كلية الزراعة جامعة المنيا.\n"
-                      , parse_mode='Markdown', reply_markup=keyboard)
+
     bot.reply_to(message, "برجاء ادخال id (كود الطالب )🆔:")
 
 @bot.message_handler(func=lambda message: True)
