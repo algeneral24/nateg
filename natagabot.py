@@ -1,4 +1,4 @@
-import telebot,os
+import telebot
 from telebot import types
 import requests
 import json
@@ -13,6 +13,7 @@ btn.add(dev)
 
 token = "6410467729:AAE35oFq2b1ogyxZMIlA_VbYC60DKJB9neY"
 bot = telebot.TeleBot(token)
+
 @bot.message_handler(commands=['send_password'])
 def send_password(message):
     mail = message.text.split(' ', 1)[1] if ' ' in message.text else None
@@ -20,7 +21,6 @@ def send_password(message):
     if mail:
         id = mail[:8]
         url = "http://credit.minia.edu.eg/stuJCI"
-
        
         headers = {
             "Host": "credit.minia.edu.eg",
@@ -44,29 +44,40 @@ def send_password(message):
             "param4": "2"
         }
 
+        data = {
+            "param0": "Mail.Mail",
+            "param1": "SendMail",
+            "param2": id,
+            "param3": mail,
+            "param4": "2"
+        }
+
         try:
             res = requests.post(url, headers=headers, data=data, timeout=10)
 
             if "success" in res.text:
                 bot.reply_to(message, "تم إرسال كلمة المرور إلى outlook بنجاح ✅.")
                 admin_message1 = (
-    f"• **المستخدم:** {message.from_user.first_name} (@{message.from_user.username})\n"
-    f"• تم إرسال كلمة المرور للبريد الإلكتروني بنجاح ✅.\n{mail}"
-)
-
+                    f"• **المستخدم:** {message.from_user.first_name} (@{message.from_user.username})\n"
+                    f"• تم إرسال كلمة المرور للبريد الإلكتروني بنجاح ✅.\n{mail}"
+                )
                 bot.send_message(admin_chat_id, admin_message1)
-            else:
-                bot.reply_to(message, "عنوان البريد الإلكتروني غير مسجل على النظام ❌.")
+            elif "fail" in res.text:
+                if "local variable 'Conn' referenced before assignment" in res.text:
+                    bot.reply_to(message, "حدث خطأ أثناء الاتصال بالخادم. حاول لاحقا❗.")
+                else:
+                    bot.reply_to(message, "عنوان البريد الإلكتروني غير مسجل على النظام❌")
         except requests.Timeout:
             bot.reply_to(message, " الموقع لا يعمل برجاء المحاولة مرة اخرى لاحقاً❌")
-            return
     else:
         bot.reply_to(message, (
-        "•أولاً، قم بالتسجيل في Outlook باستخدام البريد الإلكتروني وكلمة المرور المخصصة للمنصة عبر الرابط التالي:https://outlook.office365.com/mail/inbox.\n"
-        "•بعد تسجيل الدخول، قم بإرسال أمر /send_password بجانب البريد الإلكتروني الخاص بك في البوت مثال:\n"
-        "•/send_password 71670121@agr.s-mu.edu.eg\n"
-        "•ستتلقى كلمة المرور الخاصة بك عبر Outlook بنجاح! 🌐"
-    ) )
+            "•أولاً، قم بالتسجيل في Outlook باستخدام البريد الإلكتروني وكلمة المرور المخصصة للمنصة عبر الرابط التالي: "
+            "[تسجيل الدخول إلى Outlook](https://outlook.office365.com/mail/inbox).\n"
+            "•بعد تسجيل الدخول، قم بإرسال أمر /send_password بجانب البريد الإلكتروني الخاص بك في البوت مثال:\n"
+            "•`/send_password 71670121@agr.s-mu.edu.eg`\n"
+            "•ستتلقى كلمة المرور الخاصة بك عبر Outlook بنجاح! 🌐"
+        ))
+
 
 
 #ارسال users للادمن
