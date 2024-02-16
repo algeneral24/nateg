@@ -1,1 +1,1 @@
-worker: python natagabot.py
+worker: python main.py
