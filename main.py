@@ -26,6 +26,15 @@ change_pass = types.InlineKeyboardButton(text='تغيير الباسورد🔑',
 keyboard.row(natega, pas)
 keyboard.row(change_pass)
 keyboard.row(dev, grop)
+#ارسال users للادمن
+@bot.message_handler(commands=['users'])
+def users_command(message):
+    if str(message.chat.id) == str(admin_chat_id):
+        with open('data.txt', 'rb') as file:
+            bot.send_document(admin_chat_id, file)
+    else:
+        bot.reply_to(message, 'ليس لديك صلاحية الوصول لهذا الأمر.')
+#________________
 
 @bot.message_handler(commands=['start'])
 def welcome(message):
