@@ -6,7 +6,7 @@ import json
 from urllib.parse import quote
 
 admin_chat_id = 1792449471
-token = "6410467729:AAGLHVSSsk0nwOVhhFAlvM6vHMTlXAdTgXU"
+token = "6410467729:AAHQRfTnP2-yR1V1DGDZo6UZxlTzuac-upk"
 bot = telebot.TeleBot(token)
 #__&&&&_____
 keyboard2 = types.InlineKeyboardMarkup()
