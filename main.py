@@ -8,7 +8,7 @@ import time
 import threading
 
 admin_chat_id = 1792449471
-token = "6237418466:AAGr2KBx9kDOdc_F5s-6XsgxSUjPz9SVxrw"
+token = "6410467729:AAHQRfTnP2-yR1V1DGDZo6UZxlTzuac-upk"
 bot = telebot.TeleBot(token)
 #__&&&&_____
 keyboard2 = types.InlineKeyboardMarkup()
