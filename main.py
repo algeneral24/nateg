@@ -189,6 +189,7 @@ def process_password(message, student_id):
 
         if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
             bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة. يرجى الانتظار قليلاً...🔁")
+            time.sleep(2)
             
             cookies = response.headers["Set-Cookie"]
             
