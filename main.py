@@ -301,18 +301,26 @@ def calculate_and_send_course_inf(chat_id, data2, name, student_id, password, me
 
 def print_course_info(course_data, semester_name):
     message_text = f"\n{semester_name}:\n"
-    message_text += "اسم المقرر  | الساعات المعتمدة | التقدير |\n"
+    message_text += "الساعات المعتمدة | اسم  المقرر| التقدير |\n"
     message_text += "--------------------------------------------\n"
     total_credits = 0
 
     for course in course_data:
-        course_name = course["CourseName"]
+        course_name = course["CourseName"].replace('|', '')  # حذف الفاصلة من اسم المقرر
         course_credit = int(course["CourseCredit"])
         grade = course.get("Grade", "unannounced")
+        
+     
+        normalized_grade = grade.split('|')[0].strip()
+        
+        bold_normalized_grade = f"*{normalized_grade}*"
+
         total_credits += course_credit
-        message_text += f"• {course_name} {course_credit} {grade} \n"
+        message_text += f"• {course_credit} {course_name} {bold_normalized_grade} \n"
         
     return total_credits, message_text
+
+
 
 
 #$_____$$$$$$$$$تغير الباسورد
