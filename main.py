@@ -78,7 +78,7 @@ def callback_query(call):
 def send_password(message):
     # طلب البريد الإلكتروني من المستخدم
     bot.edit_message_text(chat_id=message.chat.id, message_id=message.message_id, text="برجاء ادخال البريد الإلكتروني الخاص بك:", reply_markup=keyboard1)
-
+    
     bot.register_next_step_handler(message, process_email)
 
 def process_email(message):
@@ -112,8 +112,12 @@ def process_email(message):
 
         try:
             res = requests.post(url, headers=headers, data=data, timeout=10)
+            chat_id = message.chat.id
+            bot.send_chat_action(chat_id, 'typing')
+
             if not res.ok:
             	bot.reply_to(message, "توجد مشكلة في الموقع الرجاء المحاولة مرة أخرى لاحقًا.❌", reply_markup=keyboard1)
+            	
 
             if "success" in res.text:
                 bot.reply_to(message, "•تم إرسال كلمة المرور إلى outlook بنجاح ✅.\n•قم بالتسجيل الان الي outlook بستخدام البريد والباسورد من خلال هذا اللينك\nhttps://outlook.office365.com/mail/inbox", reply_markup=keyboard1)
@@ -138,6 +142,7 @@ def echo_all(message):
     text="برجاء ادخال id (كود الطالب) 🆔:",
     reply_markup=keyboard1
 )
+
 
     bot.register_next_step_handler(message, process_id)
 
@@ -189,6 +194,8 @@ def process_password(message, student_id):
 
         if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
             bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة. يرجى الانتظار قليلاً...🔁")
+            chat_id = message.chat.id
+            bot.send_chat_action(chat_id, 'typing')
             
             cookies = response.headers["Set-Cookie"]
             
@@ -246,6 +253,38 @@ def process_password(message, student_id):
     	calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message)
     	calculate_and_send_course_info(chat_id, data2)
 
+def grade_translation(grade):
+    if grade == 'A':
+        return 'A', 'ممتاز مرتفع'
+    elif grade == 'A-':
+        return 'A-', 'ممتاز'
+    elif grade == 'B+':
+        return 'B+', 'جيد جدا مرتفع'
+    elif grade == 'B':
+        return 'B', 'جيد جدا'
+    elif grade == 'B-':
+        return 'B-', 'جيد مرتفع'
+    elif grade == 'C+':
+        return 'C+', 'جيد'
+    elif grade == 'C':
+        return 'C', 'مقبول مرتفع'
+    elif grade == 'C-':
+        return 'C-', 'مقبول'
+    elif grade == 'D+':
+        return 'D+', 'مقبول مشروط مرتفع'
+    elif grade == 'D':
+        return 'D', 'مقبول مشروط'
+    elif grade == 'F':
+        return 'F', 'راسب❌'
+    elif grade == 'Fr':
+        return 'FR', 'راسب تحريري❌'
+    elif grade == ' Zـ':
+        return ' Zـ',"ممنوع من الامتحان"
+    elif grade == 'P':
+        return 'p',"إجتاز"
+    else:
+        return grade, ''
+
 def calculate_and_send_course_info(chat_id, data2):
     try:
         for year_idx, year_data in enumerate(data2["StuSemesterData"]):
@@ -301,24 +340,28 @@ def calculate_and_send_course_inf(chat_id, data2, name, student_id, password, me
 
 def print_course_info(course_data, semester_name):
     message_text = f"\n{semester_name}:\n"
-    message_text += "الساعات المعتمدة | اسم  المقرر| التقدير |\n"
+    message_text += "الساعات المعتمدة | اسم المقرر | التقدير |\n"
     message_text += "--------------------------------------------\n"
     total_credits = 0
 
     for course in course_data:
         course_name = course["CourseName"].replace('|', '')  # حذف الفاصلة من اسم المقرر
         course_credit = int(course["CourseCredit"])
-        grade = course.get("Grade", "unannounced")
+        grade = course.get("Grade", "غير معلن")
         
-     
+        # استخراج الدرجة الأولى قبل |
         normalized_grade = grade.split('|')[0].strip()
         
-        bold_normalized_grade = f"*{normalized_grade}*"
+        translated_grade = grade_translation(normalized_grade)
+        bold_normalized_grade = f"*{translated_grade[0]}*"
+        arabic_translation = translated_grade[1]
 
         total_credits += course_credit
-        message_text += f"• {course_credit} {course_name} {bold_normalized_grade} \n"
+        message_text += f"• {course_credit} {course_name} {bold_normalized_grade} ({arabic_translation})\n"
         
     return total_credits, message_text
+
+
 
 
 
@@ -393,6 +436,9 @@ def process_new_password(message, user_id, current_password):
             }
 
             response = session.post(url, data=payload, headers=headers)
+            chat_id = message.chat.id
+            bot.send_chat_action(chat_id, 'typing')
+
 
             if not response.ok:
                 bot.reply_to(message, "توجد مشكلة في الموقع الرجاء المحاولة مرة أخرى لاحقًا.❌", reply_markup=keyboard1)
