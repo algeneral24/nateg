@@ -276,9 +276,9 @@ def grade_translation(grade):
     elif grade == 'D':
         return 'D', 'مقبول مشروط'
     elif grade == 'F':
-        return 'F', 'راسب❌'
+        return 'F', 'راسب✘'
     elif grade == 'Fr':
-        return 'FR', 'راسب تحريري❌'
+        return 'FR', 'راسب تحريري✘'
     elif grade == ' Zـ':
         return ' Zـ',"ممنوع من الامتحان"
     elif grade == 'P':
