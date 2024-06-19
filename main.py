@@ -159,7 +159,6 @@ def process_password(message, student_id):
     password = message.text
     chat_id = message.chat.id
     sent_message = bot.reply_to(message, "•يتم الآن التحقق من كلمة المرور...🔍")
-    time.sleep(5)
     chat_id = sent_message.chat.id
     message_id = sent_message.message_id
 
@@ -194,6 +193,7 @@ def process_password(message, student_id):
             return
 
         if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
+            time.sleep(5)
             bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة. يرجى الانتظار قليلاً...🔁")
             chat_id = message.chat.id
             bot.send_chat_action(chat_id, 'typing')
@@ -255,6 +255,7 @@ def process_password(message, student_id):
     	calculate_and_send_course_info(chat_id, data2)
 
 def grade_translation(grade):
+    
     if grade == 'A':
         return 'A', 'ممتاز مرتفع'
     elif grade == 'A-':
