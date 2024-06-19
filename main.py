@@ -159,7 +159,7 @@ def process_password(message, student_id):
     password = message.text
     chat_id = message.chat.id
     sent_message = bot.reply_to(message, "•يتم الآن التحقق من كلمة المرور...🔍")
-    time.sleep(5)
+    time.sleep(3)
     chat_id = sent_message.chat.id
     message_id = sent_message.message_id
 
