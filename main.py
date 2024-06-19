@@ -159,6 +159,7 @@ def process_password(message, student_id):
     password = message.text
     chat_id = message.chat.id
     sent_message = bot.reply_to(message, "•يتم الآن التحقق من كلمة المرور...🔍")
+    time.sleep(8)
     chat_id = sent_message.chat.id
     message_id = sent_message.message_id
 
@@ -193,7 +194,6 @@ def process_password(message, student_id):
             return
 
         if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
-            time.sleep(5)
             bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة. يرجى الانتظار قليلاً...🔁")
             chat_id = message.chat.id
             bot.send_chat_action(chat_id, 'typing')
