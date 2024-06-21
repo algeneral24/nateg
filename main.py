@@ -13,10 +13,11 @@ bot = telebot.TeleBot(token)
 #__&&&&_____
 keyboard2 = types.InlineKeyboardMarkup()
 pas1 = types.InlineKeyboardButton(text='معرفة الباسورد✅', callback_data='send_password')
+natega1 = types.InlineKeyboardButton(text='اعادة المحاولة 🔁', callback_data='echo_all')
 back_button = types.InlineKeyboardButton(text='رجوع🔙', callback_data='back')
 keyboard2.row(pas1)
+keyboard2.row(natega1)
 keyboard2.row(back_button)
-
 #_________$$$$_$$$
 keyboard = types.InlineKeyboardMarkup()
 dev = types.InlineKeyboardButton(text="𓆩⋆ ׅᎯL ׅG̸E🅽ᎬRᎪⱠ ׅ⋆𓆪", url='https://t.me/BO_R0')
