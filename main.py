@@ -18,7 +18,8 @@ back_button = types.InlineKeyboardButton(text='رجوع🔙', callback_data='bac
 keyboard2.row(pas1)
 keyboard2.row(natega1)
 keyboard2.row(back_button)
-#_________$$$$_$$$
+
+#_______7__$$$$_$$$
 keyboard = types.InlineKeyboardMarkup()
 dev = types.InlineKeyboardButton(text="𓆩⋆ ׅᎯL ׅG̸E🅽ᎬRᎪⱠ ׅ⋆𓆪", url='https://t.me/BO_R0')
 grop = types.InlineKeyboardButton(text='𝑴𝒊𝒏𝒊𝒂 𝑨𝒈𝒓𝒊𝒄𝒖𝒍𝒕𝒖𝒓𝒆☘️', url='https://t.me/+rbphVRSaWD9mNjg8')
@@ -38,7 +39,7 @@ def users_command(message):
             bot.send_document(admin_chat_id, file)
     else:
         bot.reply_to(message, 'ليس لديك صلاحية الوصول لهذا الأمر.')
-#________________
+#________________$$$$$$$
 
 @bot.message_handler(commands=['start'])
 def welcome(message):
@@ -77,7 +78,7 @@ def callback_query(call):
       	
 
 def send_password(message):
-    # طلب البريد الإلكتروني من المستخدم
+    
     bot.edit_message_text(chat_id=message.chat.id, message_id=message.message_id, text="برجاء ادخال البريد الإلكتروني الخاص بك:", reply_markup=keyboard1)
     
     bot.register_next_step_handler(message, process_email)
@@ -159,8 +160,7 @@ def process_id(message):
 def process_password(message, student_id):
     password = message.text
     chat_id = message.chat.id
-    sent_message = bot.reply_to(message, "•يتم الآن التحقق من كلمة المرور...🔍") 
-    
+    sent_message = bot.reply_to(message, "•يتم الآن التحقق من كلمة المرور...🔍")
     chat_id = sent_message.chat.id
     message_id = sent_message.message_id
 
@@ -186,17 +186,15 @@ def process_password(message, student_id):
         "userType": "2",
     }
     
-    
 
     try:
         response = requests.post(url1, headers=headers1, data=data, timeout=10)
-    
+
         if not response.ok:
             bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="توجد مشكلة في الموقع الرجاء المحاولة مرة أخرى لاحقًا.❌", reply_markup=keyboard1)
             return
 
         if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
-            
             bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة. يرجى الانتظار قليلاً...🔁")
             chat_id = message.chat.id
             bot.send_chat_action(chat_id, 'typing')
@@ -258,15 +256,14 @@ def process_password(message, student_id):
     	calculate_and_send_course_info(chat_id, data2)
 
 def grade_translation(grade):
-    
     if grade == 'A':
         return 'A', 'ممتاز مرتفع'
     elif grade == 'A-':
         return 'A-', 'ممتاز'
     elif grade == 'B+':
-        return 'B+', 'جيد جدا مرتفع'
+        return 'B+', 'جيد جداً مرتفع'
     elif grade == 'B':
-        return 'B', 'جيد جدا'
+        return 'B', 'جيد جداً'
     elif grade == 'B-':
         return 'B-', 'جيد مرتفع'
     elif grade == 'C+':
@@ -280,13 +277,13 @@ def grade_translation(grade):
     elif grade == 'D':
         return 'D', 'مقبول مشروط'
     elif grade == 'F':
-        return 'F', 'راسب✘'
-    elif grade == 'Fr':
-        return 'FR', 'راسب تحريري✘'
-    elif grade == ' Zـ':
-        return ' Zـ',"ممنوع من الامتحان"
+        return 'F', 'راسب'
+    elif grade == 'FR':
+        return 'FR', 'راسب تحريري'
+    elif grade == 'Z':
+        return 'Z', 'ممنوع من الامتحان'
     elif grade == 'P':
-        return 'p',"إجتاز"
+        return 'P', 'إجتاز'
     else:
         return grade, ''
 
@@ -297,12 +294,50 @@ def calculate_and_send_course_info(chat_id, data2):
                 semester_name = semester["SemesterName"]
                 semester_gpa = semester["GPA"]
                 cumulative_gpa = semester["CurrGPA"]
-                total_credits, message = print_course_info(semester["Courses"], semester_name)
-                message_text = f"{message}\nالساعات المسجلة: {semester['RegHrs']}        الساعات الحاصل عليها: {semester['CurrCH']}\nالمعدل الفصلي: {semester_gpa}        المعدل التراكمي: {cumulative_gpa}"
+                
+                if semester_gpa == '':
+                    semester_gpa_text = "لا يوجد بيانات تقديرية"
+                else:
+                    semester_gpa = float(semester_gpa)
+                    semester_gpa_text = f"*{semester_gpa}*"
+                    
+                if cumulative_gpa == '':
+                    cumulative_gpa = 0.0
+                else:
+                    cumulative_gpa = float(cumulative_gpa)
+                
+                total_credits, message = print_course_info(semester["Courses"], semester_name, cumulative_gpa)
+                
+                # Determine the GPA evaluation
+                if cumulative_gpa == 4.0:
+                    gpa_evaluation = "ممتاز مرتفع"
+                elif 3.7 <= cumulative_gpa < 4.0:
+                    gpa_evaluation = "ممتاز"
+                elif 3.3 <= cumulative_gpa < 3.7:
+                    gpa_evaluation = "جيد جداً مرتفع"
+                elif 3.0 <= cumulative_gpa < 3.3:
+                    gpa_evaluation = "جيد جداً"
+                elif 2.7 <= cumulative_gpa < 3.0:
+                    gpa_evaluation = "جيد مرتفع"
+                elif 2.3 <= cumulative_gpa < 2.7:
+                    gpa_evaluation = "جيد"
+                elif 2.0 <= cumulative_gpa < 2.3:
+                    gpa_evaluation = "مقبول مرتفع"
+                elif 1.7 <= cumulative_gpa < 2.0:
+                    gpa_evaluation = "مقبول"
+                elif 1.3 <= cumulative_gpa < 1.7:
+                    gpa_evaluation = "مقبول مشروط مرتفع"
+                elif 1.0 <= cumulative_gpa < 1.3:
+                    gpa_evaluation = "مقبول مشروط"
+                elif 0.0 < cumulative_gpa < 1.0:
+                    gpa_evaluation = "راسب"
+                else:
+                    gpa_evaluation = ""
+                
+                message_text = f"{message}\nالساعات المسجلة: {semester['RegHrs']}        الساعات الحاصل عليها: {semester['CurrCH']}\nالمعدل الفصلي: *{semester_gpa}*        المعدل التراكمي: *{cumulative_gpa}*\n          •التقدير التراكمي (*{gpa_evaluation}*)"
                 bot.send_message(chat_id, message_text, parse_mode='Markdown')
-                save_gpa_to_file(semester)
     except Exception as e:
-        print(f"حدث خطأ: {e}")
+        bot.send_message(chat_id, f"An error occurred: {str(e)}", parse_mode='Markdown')
 
 def save_gpa_to_file(semester):
     with open('Users.txt', 'a') as file:
@@ -315,7 +350,7 @@ def calculate_and_send_course_info1(chat_id, data2, admin_chat_id):
                 semester_name = semester["SemesterName"]
                 semester_gpa = semester["GPA"]
                 cumulative_gpa = semester["CurrGPA"]
-                total_credits, message_text = print_course_info(semester["Courses"], semester_name)
+                total_credits, message_text = print_course_info(semester["Courses"], semester_name, cumulative_gpa)
                 message = f"{message_text}\nالساعات المسجلة: {semester['RegHrs']}        الساعات الحاصل عليها: {semester['CurrCH']}\nالمعدل الفصلي: {semester_gpa}        المعدل التراكمي: {cumulative_gpa}"
                 bot.send_message(admin_chat_id, message, parse_mode='Markdown')
     except Exception as e:
@@ -337,24 +372,24 @@ def calculate_and_send_course_inf(chat_id, data2, name, student_id, password, me
                 semester_name = semester["SemesterName"]
                 semester_gpa = semester["GPA"]
                 cumulative_gpa = semester["CurrGPA"]
-                total_credits, message_text = print_course_info(semester["Courses"], semester_name)
+                total_credits, message_text = print_course_info(semester["Courses"], semester_name, cumulative_gpa)
                 admin_message += f"\nالمعدل الفصلي: {semester_gpa}        المعدل التراكمي: {cumulative_gpa}"
         bot.send_message(admin_chat_id, admin_message)
     except Exception as e:
         print(f"حدث خطأ: {e}")
 
-def print_course_info(course_data, semester_name):
+def print_course_info(course_data, semester_name, gpa_evaluation):
     message_text = f"\n{semester_name}:\n"
     message_text += "الساعات المعتمدة | اسم المقرر | التقدير |\n"
-    message_text += "--------------------------------------------\n"
+    message_text += f"--------------------------------\n"
+    
     total_credits = 0
 
     for course in course_data:
-        course_name = course["CourseName"].replace('|', '')  # حذف الفاصلة من اسم المقرر
+        course_name = course["CourseName"].replace('|', '')  
         course_credit = int(course["CourseCredit"])
         grade = course.get("Grade", "غير معلن")
-        
-        # استخراج الدرجة الأولى قبل |
+       
         normalized_grade = grade.split('|')[0].strip()
         
         translated_grade = grade_translation(normalized_grade)
@@ -365,7 +400,6 @@ def print_course_info(course_data, semester_name):
         message_text += f"• {course_credit} {course_name} {bold_normalized_grade} ({arabic_translation})\n"
         
     return total_credits, message_text
-
 
 
 
