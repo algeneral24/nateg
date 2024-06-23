@@ -254,6 +254,7 @@ def process_password(message, student_id):
     name=data2["stuName"]
     calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message)
     calculate_and_send_course_info(chat_id, data2,temp_message_id)
+    time.sleep(2)
 
 def grade_translation(grade):
     if grade == 'A':
