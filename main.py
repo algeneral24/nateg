@@ -163,6 +163,7 @@ def process_password(message, student_id):
     sent_message = bot.reply_to(message, "•يتم الآن التحقق من كلمة المرور...🔍")
     chat_id = sent_message.chat.id
     message_id = sent_message.message_id
+    password_message_id = message.message_id
 
     url1 = "http://credit.minia.edu.eg/studentLogin"
     headers1 = {
