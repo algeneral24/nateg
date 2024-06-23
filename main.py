@@ -227,8 +227,8 @@ def process_password(message, student_id):
         bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text=" الموقع لا يعمل برجاء المحاولة مرة اخري لاحقاً❌")
         return
     
-    url = "http://credit.minia.edu.eg/getJCI"
-    headers = {
+    url3 = "http://credit.minia.edu.eg/getJCI"
+    headers3 = {
         "Host": "credit.minia.edu.eg",
         "Connection": "keep-alive",
         "Content-Length": "223",
@@ -242,12 +242,12 @@ def process_password(message, student_id):
         "Accept-Language": "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
         "Cookie": cookies
     }
-    payload = {
+    payload3 = {
         "param0": "Reports.RegisterCert",
         "param1": "getTranscript",
         "param2": '{"crsReplaceHide":"true","ShowDetails":"true","portalFlag":"true","RegType":"student","AppType":"result"}'
     }
-    response1 = requests.post(url, headers=headers, data=payload).text
+    response1 = requests.post(url3, headers=headers3, data=payload3).text
     soup = BeautifulSoup(response1, 'html.parser')
     json_text = soup.get_text()
     data2 = json.loads(json_text)
