@@ -196,9 +196,8 @@ def process_password(message, student_id):
             return
 
         if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
-            bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة. يرجى الانتظار قليلاً...🔁")
-            # حذف الرسالة المؤقتة
-            bot.delete_message(chat_id=chat_id, message_id=temp_message_id)
+            bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة✅. \n•يرجى الانتظار قد يستغرق الامر دقيقتين كحد اقصى...⏳")
+            
             chat_id = message.chat.id
             bot.send_chat_action(chat_id, 'typing')
             
@@ -254,7 +253,7 @@ def process_password(message, student_id):
     data2 = json.loads(json_text)
     name=data2["stuName"]
     calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message)
-    calculate_and_send_course_info(chat_id, data2)
+    calculate_and_send_course_info(chat_id, data2,temp_message_id)
 
 def grade_translation(grade):
     if grade == 'A':
@@ -288,7 +287,9 @@ def grade_translation(grade):
     else:
         return grade, ''
 
-def calculate_and_send_course_info(chat_id, data2):
+def calculate_and_send_course_info(chat_id, data2,temp_message_id):
+    bot.delete_message(chat_id=chat_id, message_id=temp_message_id)
+    
     try:
         for year_idx, year_data in enumerate(data2["StuSemesterData"]):
             for sem_idx, semester in enumerate(year_data["Semesters"]):
@@ -336,6 +337,8 @@ def calculate_and_send_course_info(chat_id, data2):
                     gpa_evaluation = ""
                 
                 message_text = f"{message}\nالساعات المسجلة: {semester['RegHrs']}        الساعات الحاصل عليها: {semester['CurrCH']}\nالمعدل الفصلي: *{semester_gpa}*        المعدل التراكمي: *{cumulative_gpa}*\n          •التقدير التراكمي (*{gpa_evaluation}*)"
+                
+                
                 bot.send_message(chat_id, message_text, parse_mode='Markdown')
     except Exception as e:
         bot.send_message(chat_id, f"An error occurred: {str(e)}", parse_mode='Markdown')
