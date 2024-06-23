@@ -226,7 +226,7 @@ def process_password(message, student_id):
     except requests.Timeout:
         bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text=" الموقع لا يعمل برجاء المحاولة مرة اخري لاحقاً❌")
         return
-
+    time.sleep(5)
     url = "http://credit.minia.edu.eg/getJCI"
     headers = {
         "Host": "credit.minia.edu.eg",
@@ -254,7 +254,7 @@ def process_password(message, student_id):
     name=data2["stuName"]
     calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message)
     calculate_and_send_course_info(chat_id, data2,temp_message_id)
-    time.sleep(2)
+    
 
 def grade_translation(grade):
     if grade == 'A':
