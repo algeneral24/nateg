@@ -226,7 +226,7 @@ def process_password(message, student_id):
     except requests.Timeout:
         bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text=" الموقع لا يعمل برجاء المحاولة مرة اخري لاحقاً❌")
         return
-    time.sleep(5)
+    
     url = "http://credit.minia.edu.eg/getJCI"
     headers = {
         "Host": "credit.minia.edu.eg",
