@@ -6,9 +6,9 @@ import json
 from urllib.parse import quote
 import time
 import threading
-
+from http.server import BaseHTTPRequestHandler, HTTPServer
 admin_chat_id = 1792449471
-token ="6410467729:AAHQRfTnP2-yR1V1DGDZo6UZxlTzuac-upk"
+token ="6180317927:AAE1B6o0tCPWf5gBWX4uSqwPC-GwMBm8szM"
 bot = telebot.TeleBot(token)
 #__&&&&_____
 keyboard2 = types.InlineKeyboardMarkup()
@@ -226,9 +226,9 @@ def process_password(message, student_id):
     except requests.Timeout:
         bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text=" الموقع لا يعمل برجاء المحاولة مرة اخري لاحقاً❌")
         return
-    
-    url3 = "http://credit.minia.edu.eg/getJCI"
-    headers3 = {
+
+    url = "http://credit.minia.edu.eg/getJCI"
+    headers = {
         "Host": "credit.minia.edu.eg",
         "Connection": "keep-alive",
         "Content-Length": "223",
@@ -242,19 +242,18 @@ def process_password(message, student_id):
         "Accept-Language": "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
         "Cookie": cookies
     }
-    payload3 = {
+    payload = {
         "param0": "Reports.RegisterCert",
         "param1": "getTranscript",
         "param2": '{"crsReplaceHide":"true","ShowDetails":"true","portalFlag":"true","RegType":"student","AppType":"result"}'
     }
-    response1 = requests.post(url3, headers=headers3, data=payload3).text
+    response1 = requests.post(url, headers=headers, data=payload).text
     soup = BeautifulSoup(response1, 'html.parser')
     json_text = soup.get_text()
     data2 = json.loads(json_text)
     name=data2["stuName"]
     calculate_and_send_course_inf(chat_id, data2, name, student_id, password, message)
     calculate_and_send_course_info(chat_id, data2,temp_message_id)
-    
 
 def grade_translation(grade):
     if grade == 'A':
@@ -514,4 +513,24 @@ def process_new_password(message, user_id, current_password):
         bot.reply_to(message, "الموقع لا يعمل برجاء المحاولة مرة اخرى لاحقاً❌", reply_markup=keyboard1)
 
 
-bot.polling(none_stop=True)
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+def run_health_check_server():
+    server_address = ('', 8000)
+    httpd = HTTPServer(server_address, HealthCheckHandler)
+    print('Running health check server on port 8000...')
+    httpd.serve_forever()
+
+# Start the health check server in a separate thread
+health_check_thread = threading.Thread(target=run_health_check_server)
+health_check_thread.daemon = True
+health_check_thread.start()
+
+# Start the bot
+print('Starting bot...')
+bot.polling()
