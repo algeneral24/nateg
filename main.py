@@ -6,9 +6,9 @@ import json
 from urllib.parse import quote
 import time
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+
 admin_chat_id = 1792449471
-token ="6410467729:AAHQRfTnP2-yR1V1DGDZo6UZxlTzuac-upk"
+token ="6873478283:AAEyjlx5d0c4_nmg6uLPYDCb0o_7Iz7eTes"
 bot = telebot.TeleBot(token)
 #__&&&&_____
 keyboard2 = types.InlineKeyboardMarkup()
@@ -511,26 +511,6 @@ def process_new_password(message, user_id, current_password):
             bot.reply_to(message, "كلمة المرور الحالية غير صحيحة حاول مرة أخرى❌", reply_markup=keyboard1)
     except requests.Timeout:
         bot.reply_to(message, "الموقع لا يعمل برجاء المحاولة مرة اخرى لاحقاً❌", reply_markup=keyboard1)
+bot.delete_webhook(drop_pending_updates=True)
 
-
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
-
-def run_health_check_server():
-    server_address = ('', 8000)
-    httpd = HTTPServer(server_address, HealthCheckHandler)
-    print('Running health check server on port 8000...')
-    httpd.serve_forever()
-
-# Start the health check server in a separate thread
-health_check_thread = threading.Thread(target=run_health_check_server)
-health_check_thread.daemon = True
-health_check_thread.start()
-
-# Start the bot
-print('Starting bot...')
-bot.polling()
+bot.polling(none_stop=True)
