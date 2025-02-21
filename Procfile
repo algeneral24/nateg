@@ -1,1 +1,1 @@
-web: python botadmin.py
+web:node . --server
