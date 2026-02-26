@@ -1,4 +1,4 @@
-telebot
-requests
-bs4
-flask
+Flask==2.3.3
+requests==2.31.0
+Werkzeug==2.3.7
+gunicorn==21.2.0
