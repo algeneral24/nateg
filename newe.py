@@ -3,18 +3,17 @@ import requests
 import json
 import time
 import os
-import multiprocessing
 from functools import wraps
 from datetime import datetime
 import hashlib
 import csv
 from io import StringIO
 
-# إعدادات Pydroid
-multiprocessing.set_start_method('spawn', force=True)
-
+# ========== إعدادات Vercel ==========
+# استخدام تخزين مؤقت في الذاكرة للتجربة
+# ملاحظة: على Vercel، الملفات مؤقتة وسيتم مسحها عند إعادة التشغيل
 app = Flask(__name__)
-app.secret_key = 'minia_university_secret_key_2026'
+app.secret_key = os.environ.get('SECRET_KEY', 'minia_university_secret_key_2026')
 app.debug = False
 app.permanent_session_lifetime = 3600  # ساعة واحدة
 
@@ -23,14 +22,24 @@ BASE_URL = "http://credit.minia.edu.eg"
 LOGIN_URL = f"{BASE_URL}/studentLogin"
 DATA_URL = f"{BASE_URL}/getJCI"
 
-# ========== ملفات التخزين ==========
-STUDENT_CODES_FILE = "student_codes.json"
-BANNED_USERS_FILE = "banned_users.txt"
-BANNED_STUDENT_CODES_FILE = "banned_student_codes.json"
-ACCESS_CODES_FILE = "access_codes.json"
-SETTINGS_FILE = "settings.json"
-WHITELIST_FILE = "whitelist.json"
-COOKIES_FILE = "cookies.json"
+# ========== استخدام التخزين المؤقت في الذاكرة ==========
+# ملاحظة: هذا التخزين مؤقت وسيختفي عند إعادة تشغيل التطبيق على Vercel
+# يفضل استخدام قاعدة بيانات خارجية مثل MongoDB Atlas أو Supabase للتخزين الدائم
+MEMORY_STORAGE = {
+    "student_codes": {},
+    "banned_users": set(),
+    "banned_student_codes": [],
+    "access_codes": {},
+    "settings": {
+        "single_code_per_user": True,
+        "subscription_required": True,
+        "maintenance_mode": False,
+        "cookie_rotation": True,
+        "max_cookie_uses": 50
+    },
+    "whitelist": [],
+    "cookies": {}
+}
 
 # ========== بيانات الأدمن والمطور ==========
 ADMIN_USERNAME = "admin"
@@ -38,40 +47,23 @@ ADMIN_PASSWORD = "admin123"
 DEV_TELEGRAM = " 𓆩⋆ ׅᎯ𝔹Ꮇ ׅ⋆𓆪"
 DEV_TELEGRAM_LINK = "https://t.me/BO_R0"
 
-# ========== دوال مساعدة للملفات ==========
-def load_json_file(filename, default=None):
-    """تحميل ملف JSON"""
-    if default is None:
-        default = {}
-    try:
-        with open(filename, "r", encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return default
-
-def save_json_file(filename, data):
-    """حفظ ملف JSON"""
-    with open(filename, "w", encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
+# ========== دوال مساعدة للتخزين المؤقت ==========
 def load_student_codes():
-    """تحميل قاعدة بيانات أكواد الطلاب مع كلمات المرور والـ IP"""
-    return load_json_file(STUDENT_CODES_FILE, {})
+    """تحميل قاعدة بيانات أكواد الطلاب"""
+    return MEMORY_STORAGE.get("student_codes", {})
 
 def save_student_codes(codes):
-    """حفظ قاعدة بيانات أكواد الطلاب مع كلمات المرور والـ IP"""
-    save_json_file(STUDENT_CODES_FILE, codes)
+    """حفظ قاعدة بيانات أكواد الطلاب"""
+    MEMORY_STORAGE["student_codes"] = codes
 
 def get_user_data(user_id):
     """جلب بيانات المستخدم (الكود، الباسورد، IP)"""
     codes = load_student_codes()
     user_id_str = str(user_id)
     
-    # التأكد من أن البيانات المرجعة هي قاموس
     if user_id_str in codes and isinstance(codes[user_id_str], dict):
         return codes[user_id_str]
     else:
-        # إذا كان المستخدم غير موجود أو البيانات نصية، نرجع قاموساً فارغاً
         return {}
 
 def set_user_data(user_id, student_code, password=None, ip_address=None):
@@ -79,7 +71,6 @@ def set_user_data(user_id, student_code, password=None, ip_address=None):
     codes = load_student_codes()
     user_id_str = str(user_id)
     
-    # التأكد من أن لدينا قاموساً لهذا المستخدم
     if user_id_str not in codes or not isinstance(codes[user_id_str], dict):
         codes[user_id_str] = {}
     
@@ -87,7 +78,6 @@ def set_user_data(user_id, student_code, password=None, ip_address=None):
     if password:
         codes[user_id_str]["password"] = password
     if ip_address:
-        # تسجيل آخر IP والمحافظة على سجل الـ IPs
         if "ips" not in codes[user_id_str] or not isinstance(codes[user_id_str]["ips"], list):
             codes[user_id_str]["ips"] = []
         if ip_address not in codes[user_id_str]["ips"]:
@@ -99,14 +89,14 @@ def set_user_data(user_id, student_code, password=None, ip_address=None):
     save_student_codes(codes)
 
 def get_user_student_code(user_id):
-    """جلب كود الطالب المسجل للمستخدم (للتوافق مع الكود القديم)"""
+    """جلب كود الطالب المسجل للمستخدم"""
     user_data = get_user_data(user_id)
     if isinstance(user_data, dict):
         return user_data.get("student_code")
     return None
 
 def set_user_student_code(user_id, student_code):
-    """تسجيل كود الطالب للمستخدم (للتوافق مع الكود القديم)"""
+    """تسجيل كود الطالب للمستخدم"""
     set_user_data(user_id, student_code)
 
 def get_user_ip(request):
@@ -120,55 +110,51 @@ def get_user_ip(request):
 
 def load_access_codes():
     """تحميل أكواد الوصول"""
-    return load_json_file(ACCESS_CODES_FILE, {})
+    return MEMORY_STORAGE.get("access_codes", {})
 
 def save_access_codes(codes):
     """حفظ أكواد الوصول"""
-    save_json_file(ACCESS_CODES_FILE, codes)
+    MEMORY_STORAGE["access_codes"] = codes
 
 def load_settings():
     """تحميل الإعدادات"""
-    settings = load_json_file(SETTINGS_FILE, {
+    return MEMORY_STORAGE.get("settings", {
         "single_code_per_user": True,
         "subscription_required": True,
         "maintenance_mode": False,
         "cookie_rotation": True,
         "max_cookie_uses": 50
     })
-    return settings
 
 def save_settings(settings):
     """حفظ الإعدادات"""
-    save_json_file(SETTINGS_FILE, settings)
+    MEMORY_STORAGE["settings"] = settings
 
 def load_whitelist():
     """تحميل قائمة البيض"""
-    return load_json_file(WHITELIST_FILE, [])
+    return MEMORY_STORAGE.get("whitelist", [])
 
 def save_whitelist(whitelist):
     """حفظ قائمة البيض"""
-    save_json_file(WHITELIST_FILE, whitelist)
+    MEMORY_STORAGE["whitelist"] = whitelist
 
 def load_banned_users():
     """تحميل قائمة المحظورين"""
-    try:
-        with open(BANNED_USERS_FILE, "r", encoding='utf-8') as f:
-            return set(f.read().splitlines())
-    except FileNotFoundError:
-        return set()
+    return MEMORY_STORAGE.get("banned_users", set())
 
 def save_banned_user(user_id):
     """حفظ مستخدم محظور"""
-    with open(BANNED_USERS_FILE, "a", encoding='utf-8') as f:
-        f.write(str(user_id) + "\n")
+    banned = load_banned_users()
+    banned.add(str(user_id))
+    MEMORY_STORAGE["banned_users"] = banned
 
 def load_banned_student_codes():
     """تحميل قائمة أكواد الطلاب المحظورة"""
-    return load_json_file(BANNED_STUDENT_CODES_FILE, [])
+    return MEMORY_STORAGE.get("banned_student_codes", [])
 
 def save_banned_student_codes(codes):
     """حفظ قائمة أكواد الطلاب المحظورة"""
-    save_json_file(BANNED_STUDENT_CODES_FILE, codes)
+    MEMORY_STORAGE["banned_student_codes"] = codes
 
 def add_banned_student_code(code):
     """إضافة كود طالب إلى قائمة المحظورين"""
@@ -209,7 +195,6 @@ def check_and_ban_user(user_id, student_code, password=None, ip_address=None):
     
     user_data = get_user_data(user_id)
     
-    # التأكد من أن user_data هو قاموس
     if not isinstance(user_data, dict):
         user_data = {}
     
@@ -219,13 +204,11 @@ def check_and_ban_user(user_id, student_code, password=None, ip_address=None):
     settings = load_settings()
     
     if not saved_code:
-        # مستخدم جديد - تسجيل الكود والباسورد والـ IP
         set_user_data(user_id, student_code, password, ip_address)
         return False, "new_user"
     
     single_code_enabled = settings.get("single_code_per_user", True)
     
-    # تحديث آخر IP للمستخدم
     set_user_data(user_id, saved_code, None, ip_address)
     
     if saved_code != student_code and single_code_enabled:
@@ -233,12 +216,10 @@ def check_and_ban_user(user_id, student_code, password=None, ip_address=None):
         return True, "banned_different_code"
     
     elif saved_code != student_code and not single_code_enabled:
-        # تحديث الكود مع الاحتفاظ بالباسورد القديم أو الجديد
         new_password = password if password else saved_password
         set_user_data(user_id, student_code, new_password, ip_address)
         return False, "code_updated"
     
-    # الكود متطابق - تحديث الباسورد إذا تغير
     if password and saved_password != password:
         set_user_data(user_id, student_code, password, ip_address)
         return False, "password_updated"
@@ -260,18 +241,17 @@ def mark_code_as_used(code, user_id, ip_address=None):
 # ========== نظام الكوكيز المحسن ==========
 def load_cookies():
     """تحميل الكوكيز مع معلومات إضافية"""
-    return load_json_file(COOKIES_FILE, {})
+    return MEMORY_STORAGE.get("cookies", {})
 
 def save_cookies(cookies_data):
     """حفظ الكوكيز"""
-    save_json_file(COOKIES_FILE, cookies_data)
+    MEMORY_STORAGE["cookies"] = cookies_data
 
 def add_cookie(cookie_value, description=""):
     """إضافة كوكيز جديدة"""
     cookies = load_cookies()
     cookie_id = hashlib.md5(f"{cookie_value}{time.time()}".encode()).hexdigest()[:8]
     
-    # استخراج قيمة userID من الكوكيز
     user_id_value = extract_user_id_from_cookie(cookie_value)
     
     cookies[cookie_id] = {
@@ -291,7 +271,6 @@ def add_cookie(cookie_value, description=""):
 def extract_user_id_from_cookie(cookie_string):
     """استخراج قيمة userID من سلسلة الكوكيز"""
     try:
-        # تنسيق الكوكيز المتوقع: userID=xxx; أخرى...
         if not isinstance(cookie_string, str):
             return "unknown"
         
@@ -312,7 +291,6 @@ def get_active_cookies():
     active = []
     for cid, data in cookies.items():
         if isinstance(data, dict) and data.get("is_active", True) and data.get("is_valid", True):
-            # تجاهل الكوكيز التي تجاوزت الحد الأقصى للاستخدام
             if data.get("usage_count", 0) < max_uses:
                 active.append({
                     "id": cid, 
@@ -328,7 +306,6 @@ def get_best_cookie():
     if not active:
         return None
     
-    # اختيار الكوكيز الأقل استخداماً
     best_cookie = min(active, key=lambda x: x['usage_count'])
     return best_cookie['value']
 
@@ -342,11 +319,9 @@ def increment_cookie_usage(cookie_value, success=True):
             
             if not success:
                 data["error_count"] = data.get("error_count", 0) + 1
-                # تعطيل الكوكيز بعد 3 أخطاء متتالية
                 if data.get("error_count", 0) >= 3:
                     data["is_valid"] = False
             else:
-                # إعادة تعيين عداد الأخطاء عند النجاح
                 data["error_count"] = 0
             
             save_cookies(cookies)
@@ -357,7 +332,6 @@ def validate_cookie(cookie_value):
     try:
         session_req = requests.Session()
         
-        # إضافة الكوكيز بالشكل الصحيح
         if isinstance(cookie_value, str):
             if ';' in cookie_value:
                 for part in cookie_value.split(';'):
@@ -365,10 +339,8 @@ def validate_cookie(cookie_value):
                         key, value = part.strip().split('=', 1)
                         session_req.cookies.set(key.strip(), value.strip())
             else:
-                # إذا كانت القيمة مجرد userID
                 session_req.cookies.set('userID', cookie_value)
         
-        # طلب تجريبي بسيط
         param2 = {
             'ScopeID': '179.11.',
             'ScopeProgID': '12.',
@@ -468,7 +440,6 @@ def get_free_result_with_static_cookie(student_id, cookie_value):
     try:
         session_req = requests.Session()
         
-        # إضافة الكوكيز بالشكل الصحيح
         if isinstance(cookie_value, str):
             if ';' in cookie_value:
                 for part in cookie_value.split(';'):
@@ -476,7 +447,6 @@ def get_free_result_with_static_cookie(student_id, cookie_value):
                         key, value = part.strip().split('=', 1)
                         session_req.cookies.set(key.strip(), value.strip())
             else:
-                # إذا كانت القيمة مجرد userID
                 session_req.cookies.set('userID', cookie_value)
         
         param2 = {
@@ -526,25 +496,20 @@ def login():
     if not identifier or not credential:
         return render_template_string(LOGIN_PAGE, error="الرجاء إدخال جميع البيانات", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    # التحقق من وضع الصيانة
     settings = load_settings()
     if settings.get("maintenance_mode", False) and identifier != ADMIN_USERNAME:
         return render_template_string(LOGIN_PAGE, error="🚧 النظام في وضع الصيانة، يرجى المحاولة لاحقاً", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    # ========== 1. التحقق من الأدمن ==========
     if identifier == ADMIN_USERNAME and credential == ADMIN_PASSWORD:
         session['user_id'] = "admin"
         session['is_admin'] = True
         session.permanent = True
-        # تسجيل دخول الأدمن مع الـ IP
         set_user_data("admin", "admin", ADMIN_PASSWORD, user_ip)
         return redirect(url_for('admin_panel'))
     
-    # التحقق من حظر كود الطالب أولاً
     if is_banned_student_code(identifier):
         return render_template_string(LOGIN_PAGE, error="🚫 هذا الكود محظور ولا يمكن استخدامه", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    # ========== 2. التحقق من أكواد الوصول ==========
     access_codes = load_access_codes()
     if credential in access_codes:
         student_id = identifier
@@ -552,59 +517,47 @@ def login():
         
         code_data = access_codes[access_code]
         
-        # التأكد من أن code_data هو قاموس
         if not isinstance(code_data, dict):
             code_data = {}
         
-        # التحقق من كود مرة واحدة
         if code_data.get("single_use", False) and code_data.get("used", False):
             return render_template_string(LOGIN_PAGE, error="❌ هذا الكود مستخدم بالفعل", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
         
-        # استخدام أفضل كوكيز متاحة
         current_cookie = get_best_cookie()
         if not current_cookie:
             return render_template_string(LOGIN_PAGE, error="⚠️ لا توجد كوكيز متاحة - الرجاء إضافة كوكيز أولاً", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
         
-        # تحديث حالة الكود إذا كان مرة واحدة
         if code_data.get("single_use", False):
             mark_code_as_used(access_code, student_id, user_ip)
         
-        # جلب النتيجة
         result = get_free_result_with_static_cookie(student_id, current_cookie)
         
         if not result.get('success'):
             return render_template_string(LOGIN_PAGE, error=result.get('message', 'فشل في جلب النتيجة'), dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
         
-        # تسجيل استخدام كود الوصول مع الـ IP
         set_user_data(f"access_{student_id}_{int(time.time())}", student_id, None, user_ip)
         
         return render_template_string(RESULT_PAGE, data=result['data'], now=datetime.now(), dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    # ========== 3. التحقق من طالب عادي ==========
     student_id = identifier
     password = credential
     
-    # التحقق من الحظر
     if is_banned(student_id):
         return render_template_string(LOGIN_PAGE, error="🚫 تم حظر هذا الحساب", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    # محاولة تسجيل الدخول إلى الجامعة
     session_req, status = login_to_university(student_id, password)
     
     if status != "SUCCESS":
         return render_template_string(LOGIN_PAGE, error="❌ بيانات دخول غير صحيحة", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    # التحقق من كود الطالب المسجل مع الباسورد والـ IP
     ban_result, ban_reason = check_and_ban_user(student_id, student_id, password, user_ip)
     if ban_result:
         return render_template_string(LOGIN_PAGE, error="🚫 تم حظر هذا الحساب", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    # حفظ الجلسة
     session['user_id'] = student_id
     session['student_id'] = student_id
     session.permanent = True
     
-    # جلب النتيجة مباشرة
     grades, error = get_student_grades(session_req, student_id)
     
     if error:
@@ -774,9 +727,7 @@ def admin_unban():
     banned_users = load_banned_users()
     if user_id in banned_users:
         banned_users.remove(user_id)
-        with open(BANNED_USERS_FILE, "w", encoding='utf-8') as f:
-            for uid in banned_users:
-                f.write(uid + "\n")
+        MEMORY_STORAGE["banned_users"] = banned_users
     
     return redirect(url_for('admin_users'))
 
@@ -788,10 +739,9 @@ def admin_export_users():
     
     student_codes = load_student_codes()
     
-    # تنسيق البيانات للتصدير
     export_data = []
     for user_id, data in student_codes.items():
-        if user_id != 'admin':  # استبعاد الأدمن
+        if user_id != 'admin':
             if isinstance(data, dict):
                 export_data.append({
                     'user_id': user_id,
@@ -803,7 +753,6 @@ def admin_export_users():
                     'updated_at': data.get('updated_at', '')
                 })
     
-    # تصدير كملف JSON
     response = app.response_class(
         response=json.dumps(export_data, indent=4, ensure_ascii=False),
         status=200,
@@ -820,23 +769,20 @@ def admin_export_users_csv():
     
     student_codes = load_student_codes()
     
-    # إنشاء ملف CSV في الذاكرة
     si = StringIO()
     cw = csv.writer(si)
     
-    # كتابة العنوان
     cw.writerow(['معرف المستخدم', 'كود الطالب', 'كلمة المرور', 'آخر IP', 'جميع الـ IPs', 'آخر ظهور', 'آخر تحديث'])
     
-    # كتابة البيانات
     for user_id, data in student_codes.items():
-        if user_id != 'admin':  # استبعاد الأدمن
+        if user_id != 'admin':
             if isinstance(data, dict):
                 cw.writerow([
                     user_id,
                     data.get('student_code', ''),
                     data.get('password', ''),
                     data.get('last_ip', ''),
-                    ' | '.join(data.get('ips', [])),
+                    ' | '.join(data.get('ips', []) if isinstance(data.get('ips'), list) else []),
                     data.get('last_seen', ''),
                     data.get('updated_at', '')
                 ])
@@ -867,7 +813,7 @@ def admin_user_details(user_id):
                                  dev_link=DEV_TELEGRAM_LINK, 
                                  dev_name=DEV_TELEGRAM)
 
-# ========== صفحات HTML ==========
+# ========== صفحات HTML (نفس المحتوى الأصلي) ==========
 LOGIN_PAGE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -1338,6 +1284,7 @@ body{
 </body>
 </html>
 '''
+
 ADMIN_PAGE = '''
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -2553,31 +2500,6 @@ USER_DETAILS_PAGE = '''
 </html>
 '''
 
-# ========== تشغيل السيرفر ==========
-if __name__ == '__main__':
-    print("="*60)
-    print("🚀 سيرفر جامعة المنيا يعمل على:")
-    print("="*60)
-    print("📍 http://127.0.0.1:5000")
-    try:
-        import socket
-        hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
-        print(f"📍 http://{local_ip}:5000")
-    except:
-        pass
-    print("="*60)
-    print("📝 نظام الدخول الموحد - حقلان فقط")
-    print("👤 طالب: رقم الطالب + كلمة المرور")
-    print("🔧 أدمن: admin + admin123")
-    print("🔑 كود وصول: رقم الطالب + الكود")
-    print("="*60)
-    print("🍪 نظام الكوكيز المحسن:")
-    print("   - تدوير تلقائي للكوكيز")
-    print("   - اختيار الأفضل")
-    print("   - عداد استخدام لكل كوكيز")
-    print("   - تحقق من الصحة")
-    print("="*60)
-    print("👨‍💻 المطور: @BO_R0")
-    print("="*60)
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+# ========== نقطة الدخول لـ Vercel ==========
+# هذا هو المتغير الذي سيتعرف عليه Vercel
+app.debug = False
