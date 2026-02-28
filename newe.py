@@ -8,40 +8,51 @@ from datetime import datetime, timedelta
 import hashlib
 import threading
 import urllib.parse
-from pymongo import MongoClient
-from bson import ObjectId
+import ssl
 import certifi
 
+# ========== محاولة استيراد MongoDB مع معالجة الأخطاء ==========
+try:
+    from pymongo import MongoClient
+    from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+    from bson import ObjectId
+    MONGO_AVAILABLE = True
+except ImportError:
+    MONGO_AVAILABLE = False
+    print("⚠️ pymongo غير مثبت، سيتم استخدام التخزين المؤقت")
+
 # ========== إعدادات MongoDB ==========
-MONGODB_URI = "mongodb+srv://abomoussa246_db_user:BGBDtGe3vIKK549l@abm.tmdzzdx.mongodb.net/"
-DB_NAME = "university_system"
+MONGODB_URI = os.environ.get('MONGODB_URI', "mongodb+srv://abomoussa246_db_user:BGBDtGe3vIKK549l@abm.tmdzzdx.mongodb.net/")
+DB_NAME = os.environ.get('DB_NAME', "university_system")
 
-# الاتصال بقاعدة البيانات
-client = MongoClient(MONGODB_URI, tlsCAFile=certifi.where())
-db = client[DB_NAME]
+# ========== محاولة الاتصال بـ MongoDB مع إعدادات SSL محسنة ==========
+MONGO_CONNECTED = False
+db = None
+collections = {}
 
-# مجموعات MongoDB
-student_codes_collection = db["student_codes"]
-banned_users_collection = db["banned_users"]
-banned_student_codes_collection = db["banned_student_codes"]
-access_codes_collection = db["access_codes"]
-settings_collection = db["settings"]
-whitelist_collection = db["whitelist"]
-cookies_collection = db["cookies"]
-sessions_collection = db["sessions"]
-student_whitelist_collection = db["student_whitelist"]
-whitelist_mode_collection = db["whitelist_mode"]
-auto_login_settings_collection = db["auto_login_settings"]
-session_manager_sessions_collection = db["session_manager_sessions"]
-
-# إنشاء فهارس لتحسين الأداء
-student_codes_collection.create_index("user_id", unique=True)
-banned_users_collection.create_index("user_id", unique=True)
-banned_student_codes_collection.create_index("code", unique=True)
-access_codes_collection.create_index("code", unique=True)
-cookies_collection.create_index("cookie_id", unique=True)
-cookies_collection.create_index("last_used")
-student_whitelist_collection.create_index("code", unique=True)
+if MONGO_AVAILABLE:
+    try:
+        # تكوين خيارات الاتصال المحسنة
+        client = MongoClient(
+            MONGODB_URI,
+            tlsCAFile=certifi.where(),
+            tlsAllowInvalidCertificates=True,  # السماح بالشهادات غير الصالحة مؤقتاً
+            serverSelectionTimeoutMS=5000,      # مهلة 5 ثواني فقط
+            connectTimeoutMS=5000,
+            socketTimeoutMS=5000,
+            retryWrites=True,
+            retryReads=True
+        )
+        
+        # اختبار الاتصال
+        client.admin.command('ping')
+        db = client[DB_NAME]
+        MONGO_CONNECTED = True
+        print("✅ تم الاتصال بـ MongoDB بنجاح")
+        
+    except Exception as e:
+        print(f"❌ فشل الاتصال بـ MongoDB: {e}")
+        MONGO_CONNECTED = False
 
 # ========== إعدادات التطبيق ==========
 app = Flask(__name__)
@@ -69,74 +80,86 @@ SESSION_ACCOUNTS = [
     },
 ]
 
-# ========== دالة حذف الكوكيز القديمة كل ساعة ==========
-def cleanup_old_cookies():
-    """حذف الكوكيز التي لم تستخدم لأكثر من ساعة"""
-    try:
-        one_hour_ago = datetime.now() - timedelta(hours=1)
-        
-        # حذف الكوكيز القديمة
-        result = cookies_collection.delete_many({
-            "last_used": {"$lt": one_hour_ago.isoformat()}
-        })
-        
-        # حذف جلسات المدير القديمة
-        sessions_collection.delete_many({
-            "last_accessed": {"$lt": one_hour_ago.isoformat()}
-        })
-        
-        print(f"🧹 تم حذف {result.deleted_count} كوكيز قديمة")
-    except Exception as e:
-        print(f"خطأ في تنظيف الكوكيز: {e}")
+# ========== تخزين مؤقت في الذاكرة كنسخة احتياطية ==========
+MEMORY_STORAGE = {
+    "student_codes": {},
+    "banned_users": set(),
+    "banned_student_codes": [],
+    "access_codes": {},
+    "settings": {
+        "maintenance_mode": False,
+        "show_transcript": True,
+        "transcript_only": False
+    },
+    "whitelist": [],
+    "cookies": {},
+    "sessions": {},
+    "student_whitelist": set(),
+    "whitelist_mode": {"enabled": False, "filename": "student_whitelist.txt"},
+    "auto_login_settings": {
+        "enabled": False,
+        "refresh_interval": 50,
+        "last_run": None
+    },
+    "session_manager_sessions": {}
+}
 
-# تشغيل مهمة التنظيف كل ساعة
-def start_cleanup_scheduler():
-    def run_cleanup():
-        while True:
-            time.sleep(3600)  # ساعة
-            cleanup_old_cookies()
-    
-    thread = threading.Thread(target=run_cleanup, daemon=True)
-    thread.start()
+# ========== دوال مساعدة للتعامل مع MongoDB أو الذاكرة ==========
+def get_collection(collection_name):
+    """الحصول على مجموعة MongoDB إذا كانت متصلة"""
+    if MONGO_CONNECTED and db is not None:
+        return db[collection_name]
+    return None
 
-# بدء جدولة التنظيف
-start_cleanup_scheduler()
-
-# ========== دوال MongoDB المساعدة ==========
+# ========== دوال البيانات ==========
 def get_user_data(user_id):
     """الحصول على بيانات المستخدم"""
     user_id_str = str(user_id)
-    doc = student_codes_collection.find_one({"user_id": user_id_str})
-    if doc:
-        doc.pop('_id', None)
-        return doc
-    return {}
+    
+    if MONGO_CONNECTED:
+        try:
+            collection = db["student_codes"]
+            doc = collection.find_one({"user_id": user_id_str})
+            if doc:
+                doc.pop('_id', None)
+                return doc
+        except Exception as e:
+            print(f"خطأ في MongoDB get_user_data: {e}")
+    
+    return MEMORY_STORAGE["student_codes"].get(user_id_str, {})
 
 def set_user_data(user_id, student_code, password=None):
-    """حفظ بيانات المستخدم (بدون IP)"""
+    """حفظ بيانات المستخدم"""
     user_id_str = str(user_id)
     
-    doc = student_codes_collection.find_one({"user_id": user_id_str})
+    # حفظ في الذاكرة أولاً
+    if user_id_str not in MEMORY_STORAGE["student_codes"]:
+        MEMORY_STORAGE["student_codes"][user_id_str] = {}
     
-    if not doc:
-        doc = {
-            "user_id": user_id_str,
-            "student_code": student_code,
-            "updated_at": datetime.now().isoformat()
-        }
-    
-    doc["student_code"] = student_code
+    MEMORY_STORAGE["student_codes"][user_id_str]["student_code"] = student_code
     if password:
-        doc["password"] = password
+        MEMORY_STORAGE["student_codes"][user_id_str]["password"] = password
+    MEMORY_STORAGE["student_codes"][user_id_str]["updated_at"] = datetime.now().isoformat()
+    MEMORY_STORAGE["student_codes"][user_id_str]["last_seen"] = datetime.now().isoformat()
     
-    doc["updated_at"] = datetime.now().isoformat()
-    doc["last_seen"] = datetime.now().isoformat()
-    
-    student_codes_collection.update_one(
-        {"user_id": user_id_str},
-        {"$set": doc},
-        upsert=True
-    )
+    # حفظ في MongoDB إذا كان متاحاً
+    if MONGO_CONNECTED:
+        try:
+            collection = db["student_codes"]
+            doc = {
+                "user_id": user_id_str,
+                "student_code": student_code,
+                "password": password,
+                "updated_at": datetime.now().isoformat(),
+                "last_seen": datetime.now().isoformat()
+            }
+            collection.update_one(
+                {"user_id": user_id_str},
+                {"$set": doc},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"خطأ في MongoDB set_user_data: {e}")
 
 def get_user_ip(request):
     """الحصول على IP المستخدم"""
@@ -149,162 +172,282 @@ def get_user_ip(request):
 
 def load_settings():
     """تحميل الإعدادات"""
-    doc = settings_collection.find_one({"_id": "settings"})
-    if doc:
-        doc.pop('_id', None)
-        return doc
-    return {
-        "maintenance_mode": False,
-        "show_transcript": True,
-        "transcript_only": False
-    }
+    if MONGO_CONNECTED:
+        try:
+            collection = db["settings"]
+            doc = collection.find_one({"_id": "settings"})
+            if doc:
+                doc.pop('_id', None)
+                return doc
+        except Exception as e:
+            print(f"خطأ في MongoDB load_settings: {e}")
+    
+    return MEMORY_STORAGE["settings"]
 
 def save_settings(settings):
     """حفظ الإعدادات"""
-    settings_collection.update_one(
-        {"_id": "settings"},
-        {"$set": settings},
-        upsert=True
-    )
+    MEMORY_STORAGE["settings"] = settings
+    
+    if MONGO_CONNECTED:
+        try:
+            collection = db["settings"]
+            settings["_id"] = "settings"
+            collection.update_one(
+                {"_id": "settings"},
+                {"$set": settings},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"خطأ في MongoDB save_settings: {e}")
 
 def load_whitelist():
     """تحميل قائمة البيض"""
-    doc = whitelist_collection.find_one({"_id": "whitelist"})
-    if doc and "users" in doc:
-        return doc["users"]
-    return []
+    if MONGO_CONNECTED:
+        try:
+            collection = db["whitelist"]
+            doc = collection.find_one({"_id": "whitelist"})
+            if doc and "users" in doc:
+                return doc["users"]
+        except Exception as e:
+            print(f"خطأ في MongoDB load_whitelist: {e}")
+    
+    return MEMORY_STORAGE["whitelist"]
 
 def save_whitelist(whitelist):
     """حفظ قائمة البيض"""
-    whitelist_collection.update_one(
-        {"_id": "whitelist"},
-        {"$set": {"users": whitelist}},
-        upsert=True
-    )
+    MEMORY_STORAGE["whitelist"] = whitelist
+    
+    if MONGO_CONNECTED:
+        try:
+            collection = db["whitelist"]
+            collection.update_one(
+                {"_id": "whitelist"},
+                {"$set": {"users": whitelist}},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"خطأ في MongoDB save_whitelist: {e}")
 
 def load_banned_users():
     """تحميل المستخدمين المحظورين"""
-    banned = set()
-    for doc in banned_users_collection.find():
-        banned.add(doc["user_id"])
-    return banned
+    if MONGO_CONNECTED:
+        try:
+            collection = db["banned_users"]
+            banned = set()
+            for doc in collection.find():
+                banned.add(doc["user_id"])
+            return banned
+        except Exception as e:
+            print(f"خطأ في MongoDB load_banned_users: {e}")
+    
+    return MEMORY_STORAGE["banned_users"]
 
 def save_banned_user(user_id):
     """حظر مستخدم"""
-    try:
-        banned_users_collection.insert_one({
-            "user_id": str(user_id),
-            "banned_at": datetime.now().isoformat()
-        })
-    except:
-        pass
+    MEMORY_STORAGE["banned_users"].add(str(user_id))
+    
+    if MONGO_CONNECTED:
+        try:
+            collection = db["banned_users"]
+            collection.insert_one({
+                "user_id": str(user_id),
+                "banned_at": datetime.now().isoformat()
+            })
+        except Exception as e:
+            print(f"خطأ في MongoDB save_banned_user: {e}")
 
 def load_banned_student_codes():
     """تحميل أكواد الطلاب المحظورة"""
-    codes = []
-    for doc in banned_student_codes_collection.find():
-        codes.append(doc["code"])
-    return codes
+    if MONGO_CONNECTED:
+        try:
+            collection = db["banned_student_codes"]
+            codes = []
+            for doc in collection.find():
+                codes.append(doc["code"])
+            return codes
+        except Exception as e:
+            print(f"خطأ في MongoDB load_banned_student_codes: {e}")
+    
+    return MEMORY_STORAGE["banned_student_codes"]
 
 def save_banned_student_codes(codes):
     """حفظ أكواد الطلاب المحظورة"""
-    banned_student_codes_collection.delete_many({})
-    for code in codes:
+    MEMORY_STORAGE["banned_student_codes"] = codes
+    
+    if MONGO_CONNECTED:
         try:
-            banned_student_codes_collection.insert_one({"code": code})
-        except:
-            pass
+            collection = db["banned_student_codes"]
+            collection.delete_many({})
+            for code in codes:
+                collection.insert_one({"code": code})
+        except Exception as e:
+            print(f"خطأ في MongoDB save_banned_student_codes: {e}")
 
 def is_banned_student_code(student_code):
     """التحقق مما إذا كان كود الطالب محظوراً"""
-    return banned_student_codes_collection.find_one({"code": student_code}) is not None
+    if MONGO_CONNECTED:
+        try:
+            collection = db["banned_student_codes"]
+            return collection.find_one({"code": student_code}) is not None
+        except Exception as e:
+            print(f"خطأ في MongoDB is_banned_student_code: {e}")
+    
+    return student_code in MEMORY_STORAGE["banned_student_codes"]
 
 def is_banned(user_id):
     """التحقق مما إذا كان المستخدم محظوراً"""
-    return banned_users_collection.find_one({"user_id": str(user_id)}) is not None
+    return str(user_id) in load_banned_users()
 
 def is_whitelisted(user_id):
     """التحقق مما إذا كان المستخدم في القائمة البيضاء"""
-    whitelist = load_whitelist()
-    return str(user_id) in whitelist
+    return str(user_id) in load_whitelist()
 
 def load_access_codes():
     """تحميل أكواد الوصول"""
-    codes_dict = {}
-    for doc in access_codes_collection.find():
-        code = doc["code"]
-        doc.pop('_id', None)
-        doc.pop('code', None)
-        codes_dict[code] = doc
-    return codes_dict
+    if MONGO_CONNECTED:
+        try:
+            collection = db["access_codes"]
+            codes_dict = {}
+            for doc in collection.find():
+                code = doc["code"]
+                doc.pop('_id', None)
+                doc.pop('code', None)
+                codes_dict[code] = doc
+            return codes_dict
+        except Exception as e:
+            print(f"خطأ في MongoDB load_access_codes: {e}")
+    
+    return MEMORY_STORAGE["access_codes"]
 
 def save_access_codes(codes_dict):
     """حفظ أكواد الوصول"""
-    access_codes_collection.delete_many({})
-    for code, data in codes_dict.items():
-        doc = data.copy()
-        doc["code"] = code
-        access_codes_collection.insert_one(doc)
+    MEMORY_STORAGE["access_codes"] = codes_dict
+    
+    if MONGO_CONNECTED:
+        try:
+            collection = db["access_codes"]
+            collection.delete_many({})
+            for code, data in codes_dict.items():
+                doc = data.copy()
+                doc["code"] = code
+                collection.insert_one(doc)
+        except Exception as e:
+            print(f"خطأ في MongoDB save_access_codes: {e}")
 
 def mark_code_as_used(code, user_id):
     """تحديد كود الوصول كمستخدم"""
-    result = access_codes_collection.update_one(
-        {"code": code},
-        {
-            "$set": {
-                "used": True,
-                "used_by": user_id,
-                "used_at": datetime.now().isoformat()
-            }
-        }
-    )
-    return result.modified_count > 0
+    if MONGO_CONNECTED:
+        try:
+            collection = db["access_codes"]
+            result = collection.update_one(
+                {"code": code},
+                {
+                    "$set": {
+                        "used": True,
+                        "used_by": user_id,
+                        "used_at": datetime.now().isoformat()
+                    }
+                }
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"خطأ في MongoDB mark_code_as_used: {e}")
+    
+    # نسخة احتياطية في الذاكرة
+    codes = MEMORY_STORAGE["access_codes"]
+    if code in codes:
+        codes[code]["used"] = True
+        codes[code]["used_by"] = user_id
+        codes[code]["used_at"] = datetime.now().isoformat()
+        return True
+    return False
 
 def load_whitelist_mode():
     """تحميل وضع القائمة البيضاء"""
-    doc = whitelist_mode_collection.find_one({"_id": "mode"})
-    if doc:
-        doc.pop('_id', None)
-        return doc
-    return {"enabled": False, "filename": "student_whitelist.txt"}
+    if MONGO_CONNECTED:
+        try:
+            collection = db["whitelist_mode"]
+            doc = collection.find_one({"_id": "mode"})
+            if doc:
+                doc.pop('_id', None)
+                return doc
+        except Exception as e:
+            print(f"خطأ في MongoDB load_whitelist_mode: {e}")
+    
+    return MEMORY_STORAGE["whitelist_mode"]
 
 def save_whitelist_mode(mode_data):
     """حفظ وضع القائمة البيضاء"""
-    mode_data["_id"] = "mode"
-    whitelist_mode_collection.update_one(
-        {"_id": "mode"},
-        {"$set": mode_data},
-        upsert=True
-    )
+    MEMORY_STORAGE["whitelist_mode"] = mode_data
+    
+    if MONGO_CONNECTED:
+        try:
+            collection = db["whitelist_mode"]
+            mode_data["_id"] = "mode"
+            collection.update_one(
+                {"_id": "mode"},
+                {"$set": mode_data},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"خطأ في MongoDB save_whitelist_mode: {e}")
 
 def load_student_whitelist():
     """تحميل قائمة الطلاب المسموح لهم"""
-    whitelist = set()
-    for doc in student_whitelist_collection.find():
-        whitelist.add(doc["code"])
-    return whitelist
+    if MONGO_CONNECTED:
+        try:
+            collection = db["student_whitelist"]
+            whitelist = set()
+            for doc in collection.find():
+                whitelist.add(doc["code"])
+            return whitelist
+        except Exception as e:
+            print(f"خطأ في MongoDB load_student_whitelist: {e}")
+    
+    return MEMORY_STORAGE["student_whitelist"]
 
 def save_student_whitelist(students_set):
     """حفظ قائمة الطلاب المسموح لهم"""
-    student_whitelist_collection.delete_many({})
-    for code in students_set:
+    MEMORY_STORAGE["student_whitelist"] = set(students_set)
+    
+    if MONGO_CONNECTED:
         try:
-            student_whitelist_collection.insert_one({"code": str(code)})
-        except:
-            pass
+            collection = db["student_whitelist"]
+            collection.delete_many({})
+            for code in students_set:
+                collection.insert_one({"code": str(code)})
+        except Exception as e:
+            print(f"خطأ في MongoDB save_student_whitelist: {e}")
 
 def add_to_student_whitelist(student_code):
     """إضافة طالب إلى القائمة البيضاء"""
-    try:
-        student_whitelist_collection.insert_one({"code": str(student_code)})
-        return True
-    except:
-        return False
+    if MONGO_CONNECTED:
+        try:
+            collection = db["student_whitelist"]
+            collection.insert_one({"code": str(student_code)})
+            return True
+        except Exception as e:
+            print(f"خطأ في MongoDB add_to_student_whitelist: {e}")
+    
+    whitelist = MEMORY_STORAGE["student_whitelist"]
+    whitelist.add(str(student_code))
+    return True
 
 def remove_from_student_whitelist(student_code):
     """حذف طالب من القائمة البيضاء"""
-    result = student_whitelist_collection.delete_one({"code": str(student_code)})
-    return result.deleted_count > 0
+    if MONGO_CONNECTED:
+        try:
+            collection = db["student_whitelist"]
+            result = collection.delete_one({"code": str(student_code)})
+            return result.deleted_count > 0
+        except Exception as e:
+            print(f"خطأ في MongoDB remove_from_student_whitelist: {e}")
+    
+    whitelist = MEMORY_STORAGE["student_whitelist"]
+    if str(student_code) in whitelist:
+        whitelist.remove(str(student_code))
+        return True
+    return False
 
 def is_student_whitelisted(student_code):
     """التحقق مما إذا كان الطالب مسموح له باستخدام النظام"""
@@ -312,28 +455,44 @@ def is_student_whitelisted(student_code):
     if not mode.get("enabled", False):
         return True
     
-    return student_whitelist_collection.find_one({"code": str(student_code)}) is not None
+    if MONGO_CONNECTED:
+        try:
+            collection = db["student_whitelist"]
+            return collection.find_one({"code": str(student_code)}) is not None
+        except Exception as e:
+            print(f"خطأ في MongoDB is_student_whitelisted: {e}")
+    
+    return str(student_code) in MEMORY_STORAGE["student_whitelist"]
 
 def load_auto_login_settings():
     """تحميل إعدادات التسجيل التلقائي"""
-    doc = auto_login_settings_collection.find_one({"_id": "settings"})
-    if doc:
-        doc.pop('_id', None)
-        return doc
-    return {
-        "enabled": False,
-        "refresh_interval": 50,
-        "last_run": None
-    }
+    if MONGO_CONNECTED:
+        try:
+            collection = db["auto_login_settings"]
+            doc = collection.find_one({"_id": "settings"})
+            if doc:
+                doc.pop('_id', None)
+                return doc
+        except Exception as e:
+            print(f"خطأ في MongoDB load_auto_login_settings: {e}")
+    
+    return MEMORY_STORAGE["auto_login_settings"]
 
 def save_auto_login_settings(settings):
     """حفظ إعدادات التسجيل التلقائي"""
-    settings["_id"] = "settings"
-    auto_login_settings_collection.update_one(
-        {"_id": "settings"},
-        {"$set": settings},
-        upsert=True
-    )
+    MEMORY_STORAGE["auto_login_settings"] = settings
+    
+    if MONGO_CONNECTED:
+        try:
+            collection = db["auto_login_settings"]
+            settings["_id"] = "settings"
+            collection.update_one(
+                {"_id": "settings"},
+                {"$set": settings},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"خطأ في MongoDB save_auto_login_settings: {e}")
 
 def toggle_auto_login_state(enabled=None):
     """تشغيل أو إيقاف التسجيل التلقائي"""
@@ -361,19 +520,34 @@ class SessionManager:
     def load_sessions(self):
         """تحميل الجلسات من MongoDB"""
         self.sessions = {}
-        for doc in session_manager_sessions_collection.find():
-            account_id = doc["account_id"]
-            doc.pop('_id', None)
-            doc.pop('account_id', None)
-            self.sessions[account_id] = doc
+        
+        if MONGO_CONNECTED:
+            try:
+                collection = db["session_manager_sessions"]
+                for doc in collection.find():
+                    account_id = doc["account_id"]
+                    doc.pop('_id', None)
+                    doc.pop('account_id', None)
+                    self.sessions[account_id] = doc
+            except Exception as e:
+                print(f"خطأ في MongoDB load_sessions: {e}")
+        else:
+            self.sessions = MEMORY_STORAGE["session_manager_sessions"]
     
     def save_sessions(self):
         """حفظ الجلسات إلى MongoDB"""
-        session_manager_sessions_collection.delete_many({})
-        for account_id, session_data in self.sessions.items():
-            doc = session_data.copy()
-            doc["account_id"] = account_id
-            session_manager_sessions_collection.insert_one(doc)
+        MEMORY_STORAGE["session_manager_sessions"] = self.sessions
+        
+        if MONGO_CONNECTED:
+            try:
+                collection = db["session_manager_sessions"]
+                collection.delete_many({})
+                for account_id, session_data in self.sessions.items():
+                    doc = session_data.copy()
+                    doc["account_id"] = account_id
+                    collection.insert_one(doc)
+            except Exception as e:
+                print(f"خطأ في MongoDB save_sessions: {e}")
     
     def login_account(self, username, password):
         """تسجيل الدخول إلى حساب"""
@@ -524,21 +698,35 @@ session_manager.set_auto_login_state(auto_settings.get("enabled", False))
 # ========== نظام الكوكيز ==========
 def load_cookies():
     """تحميل الكوكيز من MongoDB"""
-    cookies_dict = {}
-    for doc in cookies_collection.find():
-        cookie_id = doc["cookie_id"]
-        doc.pop('_id', None)
-        doc.pop('cookie_id', None)
-        cookies_dict[cookie_id] = doc
-    return cookies_dict
+    if MONGO_CONNECTED:
+        try:
+            collection = db["cookies"]
+            cookies_dict = {}
+            for doc in collection.find():
+                cookie_id = doc["cookie_id"]
+                doc.pop('_id', None)
+                doc.pop('cookie_id', None)
+                cookies_dict[cookie_id] = doc
+            return cookies_dict
+        except Exception as e:
+            print(f"خطأ في MongoDB load_cookies: {e}")
+    
+    return MEMORY_STORAGE["cookies"]
 
 def save_cookies(cookies_data):
     """حفظ الكوكيز إلى MongoDB"""
-    cookies_collection.delete_many({})
-    for cookie_id, data in cookies_data.items():
-        doc = data.copy()
-        doc["cookie_id"] = cookie_id
-        cookies_collection.insert_one(doc)
+    MEMORY_STORAGE["cookies"] = cookies_data
+    
+    if MONGO_CONNECTED:
+        try:
+            collection = db["cookies"]
+            collection.delete_many({})
+            for cookie_id, data in cookies_data.items():
+                doc = data.copy()
+                doc["cookie_id"] = cookie_id
+                collection.insert_one(doc)
+        except Exception as e:
+            print(f"خطأ في MongoDB save_cookies: {e}")
 
 def add_cookie(cookie_value, description=""):
     """إضافة كوكيز جديدة"""
@@ -650,6 +838,44 @@ def increment_cookie_usage(cookie_value, success=True):
                 
                 save_cookies(cookies)
                 break
+
+def cleanup_old_cookies():
+    """حذف الكوكيز التي لم تستخدم لأكثر من ساعة"""
+    try:
+        one_hour_ago = datetime.now() - timedelta(hours=1)
+        
+        if MONGO_CONNECTED:
+            collection = db["cookies"]
+            result = collection.delete_many({
+                "last_used": {"$lt": one_hour_ago.isoformat()}
+            })
+            print(f"🧹 تم حذف {result.deleted_count} كوكيز قديمة من MongoDB")
+        else:
+            cookies = MEMORY_STORAGE.get("cookies", {})
+            to_delete = []
+            for cid, data in cookies.items():
+                last_used = data.get("last_used")
+                if last_used and last_used < one_hour_ago.isoformat():
+                    to_delete.append(cid)
+            
+            for cid in to_delete:
+                del cookies[cid]
+            
+            print(f"🧹 تم حذف {len(to_delete)} كوكيز قديمة من الذاكرة")
+    except Exception as e:
+        print(f"خطأ في تنظيف الكوكيز: {e}")
+
+# تشغيل مهمة التنظيف كل ساعة
+def start_cleanup_scheduler():
+    def run_cleanup():
+        while True:
+            time.sleep(3600)  # ساعة
+            cleanup_old_cookies()
+    
+    thread = threading.Thread(target=run_cleanup, daemon=True)
+    thread.start()
+
+start_cleanup_scheduler()
 
 # ========== دوال جلب البيانات من الجامعة ==========
 def get_student_transcript_with_cookies(student_id, cookies_dict):
@@ -1849,11 +2075,19 @@ def admin_users():
         return redirect(url_for('index'))
     
     student_codes = {}
-    for doc in student_codes_collection.find():
-        user_id = doc["user_id"]
-        doc.pop('_id', None)
-        doc.pop('user_id', None)
-        student_codes[user_id] = doc
+    if MONGO_CONNECTED:
+        try:
+            collection = db["student_codes"]
+            for doc in collection.find():
+                user_id = doc["user_id"]
+                doc.pop('_id', None)
+                doc.pop('user_id', None)
+                student_codes[user_id] = doc
+        except Exception as e:
+            print(f"خطأ في MongoDB admin_users: {e}")
+            student_codes = MEMORY_STORAGE["student_codes"]
+    else:
+        student_codes = MEMORY_STORAGE["student_codes"]
     
     banned_users = load_banned_users()
     whitelist = load_whitelist()
@@ -1875,12 +2109,27 @@ def admin_banned_codes():
         code = request.form.get('code')
         
         if action == 'add':
-            try:
-                banned_student_codes_collection.insert_one({"code": code})
-            except:
-                pass
+            if MONGO_CONNECTED:
+                try:
+                    collection = db["banned_student_codes"]
+                    collection.insert_one({"code": code})
+                except Exception as e:
+                    print(f"خطأ في MongoDB admin_banned_codes add: {e}")
+            else:
+                codes = MEMORY_STORAGE["banned_student_codes"]
+                if code not in codes:
+                    codes.append(code)
         elif action == 'remove':
-            banned_student_codes_collection.delete_one({"code": code})
+            if MONGO_CONNECTED:
+                try:
+                    collection = db["banned_student_codes"]
+                    collection.delete_one({"code": code})
+                except Exception as e:
+                    print(f"خطأ في MongoDB admin_banned_codes remove: {e}")
+            else:
+                codes = MEMORY_STORAGE["banned_student_codes"]
+                if code in codes:
+                    codes.remove(code)
         
         return redirect(url_for('admin_banned_codes'))
     
@@ -1901,7 +2150,16 @@ def admin_cookies():
             add_cookie(cookie_value, description)
         elif action == 'delete':
             cookie_id = request.form.get('cookie_id')
-            cookies_collection.delete_one({"cookie_id": cookie_id})
+            if MONGO_CONNECTED:
+                try:
+                    collection = db["cookies"]
+                    collection.delete_one({"cookie_id": cookie_id})
+                except Exception as e:
+                    print(f"خطأ في MongoDB admin_cookies delete: {e}")
+            else:
+                cookies = MEMORY_STORAGE["cookies"]
+                if cookie_id in cookies:
+                    del cookies[cookie_id]
         elif action == 'toggle':
             cookie_id = request.form.get('cookie_id')
             cookies = load_cookies()
@@ -1959,7 +2217,17 @@ def admin_access_codes():
             "created_at": datetime.now().isoformat(),
             "created_by": session.get('user_id', 'admin')
         }
-        access_codes_collection.insert_one(doc)
+        
+        if MONGO_CONNECTED:
+            try:
+                collection = db["access_codes"]
+                collection.insert_one(doc)
+            except Exception as e:
+                print(f"خطأ في MongoDB admin_access_codes add: {e}")
+        else:
+            codes = MEMORY_STORAGE["access_codes"]
+            codes[code] = doc
+        
         return redirect(url_for('admin_access_codes'))
     
     codes = load_access_codes()
@@ -1990,7 +2258,16 @@ def admin_unban():
     
     user_id = request.form.get('user_id')
     
-    banned_users_collection.delete_one({"user_id": user_id})
+    if MONGO_CONNECTED:
+        try:
+            collection = db["banned_users"]
+            collection.delete_one({"user_id": user_id})
+        except Exception as e:
+            print(f"خطأ في MongoDB admin_unban: {e}")
+    else:
+        banned_users = MEMORY_STORAGE["banned_users"]
+        if user_id in banned_users:
+            banned_users.remove(user_id)
     
     return redirect(url_for('admin_users'))
 
@@ -2000,10 +2277,18 @@ def admin_export_users():
         return redirect(url_for('index'))
     
     export_data = []
-    for doc in student_codes_collection.find():
-        if doc.get('user_id') != 'admin':
-            doc.pop('_id', None)
-            export_data.append(doc)
+    if MONGO_CONNECTED:
+        try:
+            collection = db["student_codes"]
+            for doc in collection.find():
+                if doc.get('user_id') != 'admin':
+                    doc.pop('_id', None)
+                    export_data.append(doc)
+        except Exception as e:
+            print(f"خطأ في MongoDB export_users: {e}")
+            export_data = [v for k, v in MEMORY_STORAGE["student_codes"].items() if k != 'admin']
+    else:
+        export_data = [v for k, v in MEMORY_STORAGE["student_codes"].items() if k != 'admin']
     
     response = app.response_class(
         response=json.dumps(export_data, indent=4, ensure_ascii=False),
