@@ -4,13 +4,15 @@ import json
 import time
 import os
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import csv
+import threading
 from io import StringIO
+import urllib.parse
 
 # ========== إعدادات Vercel ==========
-# استخدام تخزين مؤقت في الذاكرة للتجربة
+# استخدام التخزين المؤقت في الذاكرة للتجربة
 # ملاحظة: على Vercel، الملفات مؤقتة وسيتم مسحها عند إعادة التشغيل
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'minia_university_secret_key_2026')
@@ -35,29 +37,327 @@ MEMORY_STORAGE = {
         "subscription_required": True,
         "maintenance_mode": False,
         "cookie_rotation": True,
-        "max_cookie_uses": 50
+        "max_cookie_uses": 50,
+        "show_transcript": True,
+        "transcript_only": False
     },
     "whitelist": [],
-    "cookies": {}
+    "cookies": {},
+    "sessions": {},
+    "student_whitelist": set(),
+    "whitelist_mode": {"enabled": False, "filename": "student_whitelist.txt"},
+    "auto_login_settings": {
+        "enabled": False,  # معطل افتراضياً على Vercel
+        "refresh_interval": 50,
+        "last_run": None
+    },
+    "session_manager_sessions": {}
 }
 
 # ========== بيانات الأدمن والمطور ==========
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
-DEV_TELEGRAM = " 𓆩⋆ ׅᎯ𝔹Ꮇ ׅ⋆𓆪"
+DEV_TELEGRAM = "𓆩⋆ ׅᎯ𝔹Ꮇ ׅ⋆𓆪"
 DEV_TELEGRAM_LINK = "https://t.me/BO_R0"
 
-# ========== دوال مساعدة للتخزين المؤقت ==========
+# ========== حساب الجلسات الدائمة ==========
+SESSION_ACCOUNTS = [
+    {
+        "username": "81691006",
+        "password": "iOUy651!",
+        "active": True
+    },
+]
+
+# ========== إعدادات التسجيل التلقائي ==========
+def load_auto_login_settings():
+    """تحميل إعدادات التسجيل التلقائي"""
+    return MEMORY_STORAGE.get("auto_login_settings", {
+        "enabled": False,  # معطل افتراضياً على Vercel
+        "refresh_interval": 50,
+        "last_run": None
+    })
+
+def save_auto_login_settings(settings):
+    """حفظ إعدادات التسجيل التلقائي"""
+    MEMORY_STORAGE["auto_login_settings"] = settings
+
+def toggle_auto_login(enabled=None):
+    """تشغيل أو إيقاف التسجيل التلقائي"""
+    settings = load_auto_login_settings()
+    if enabled is not None:
+        settings["enabled"] = enabled
+    else:
+        settings["enabled"] = not settings.get("enabled", False)
+    settings["last_updated"] = datetime.now().isoformat()
+    save_auto_login_settings(settings)
+    return settings["enabled"]
+
+# ========== دوال مساعدة للقائمة البيضاء للطلاب ==========
+def load_whitelist_mode():
+    """تحميل وضع القائمة البيضاء للطلاب"""
+    return MEMORY_STORAGE.get("whitelist_mode", {"enabled": False, "filename": "student_whitelist.txt"})
+
+def save_whitelist_mode(mode_data):
+    """حفظ وضع القائمة البيضاء للطلاب"""
+    MEMORY_STORAGE["whitelist_mode"] = mode_data
+
+def load_student_whitelist(filename=None):
+    """تحميل قائمة الطلاب المسموح لهم"""
+    return MEMORY_STORAGE.get("student_whitelist", set())
+
+def save_student_whitelist(students_set, filename="student_whitelist.txt"):
+    """حفظ قائمة الطلاب المسموح لهم"""
+    MEMORY_STORAGE["student_whitelist"] = set(students_set)
+
+def add_to_student_whitelist(student_code):
+    """إضافة طالب إلى القائمة البيضاء"""
+    whitelist = load_student_whitelist()
+    whitelist.add(str(student_code))
+    save_student_whitelist(whitelist)
+    return True
+
+def remove_from_student_whitelist(student_code):
+    """حذف طالب من القائمة البيضاء"""
+    whitelist = load_student_whitelist()
+    if str(student_code) in whitelist:
+        whitelist.remove(str(student_code))
+        save_student_whitelist(whitelist)
+        return True
+    return False
+
+def is_student_whitelisted(student_code):
+    """التحقق مما إذا كان الطالب مسموح له باستخدام النظام"""
+    mode = load_whitelist_mode()
+    if not mode.get("enabled", False):
+        return True
+    
+    whitelist = load_student_whitelist()
+    return str(student_code) in whitelist
+
+# ========== نظام إدارة الجلسات (Session Manager) ==========
+class SessionManager:
+    def __init__(self):
+        self.sessions = MEMORY_STORAGE.get("session_manager_sessions", {})
+        self.last_refresh = {}
+        self.refresh_interval = 50
+        self.lock = threading.Lock()
+        self.auto_login_enabled = False  # معطل افتراضياً على Vercel
+        self.refresh_thread = None
+        self.stop_refresh = False
+    
+    def load_sessions(self):
+        self.sessions = MEMORY_STORAGE.get("session_manager_sessions", {})
+    
+    def save_sessions(self):
+        MEMORY_STORAGE["session_manager_sessions"] = self.sessions
+    
+    def login_account(self, username, password):
+        try:
+            session_req = requests.Session()
+            
+            login_data = {
+                'UserName': username,
+                'Password': password,
+                'sysID': '313',
+                'UserLang': 'A',
+                'userType': '2'
+            }
+            
+            response = session_req.post(
+                LOGIN_URL,
+                data=login_data,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                },
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                except Exception:
+                    result = {}
+
+                cookies = session_req.cookies.get_dict()
+                user_id = cookies.get("userID", "")
+                session_dt = cookies.get("sessionDateTime", "")
+
+                if session_dt:
+                    cookie_string = f"userID={user_id};sessionDateTime={session_dt}"
+
+                    row = result.get("rows", [{}])[0].get("row", {})
+                    login_ok = row.get("LoginOK")
+                    message_error = row.get("messageError", "")
+
+                    if login_ok == "True":
+                        print(f"✅ تم تسجيل الدخول بنجاح للحساب {username}")
+                    elif "تم تعطيل حسابك" in message_error:
+                        print(f"⚠️ الحساب معطل لكن الجلسة اتحدثت {username}")
+                    else:
+                        print(f"⚠️ تسجيل دخول غير واضح لكن الجلسة صالحة {username}")
+
+                    return {
+                        'success': True,
+                        'cookies': cookies,
+                        'cookie_string': cookie_string,
+                        'session': session_req,
+                        'username': username
+                    }
+
+                print(f"❌ فشل تسجيل الدخول - لم يتم استلام sessionDateTime")
+                return {'success': False, 'error': 'لم يتم استلام sessionDateTime'}
+
+            else:
+                return {'success': False, 'error': f'HTTP Error: {response.status_code}'}
+                
+        except requests.Timeout:
+            return {'success': False, 'error': 'timeout'}
+        except requests.RequestException as e:
+            return {'success': False, 'error': f'Network Error: {str(e)}'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def refresh_all_sessions(self):
+        """تحديث جميع الجلسات - يتم استدعاؤها مرة واحدة عند الطلب"""
+        if not self.auto_login_enabled:
+            return
+        
+        with self.lock:
+            for i, account in enumerate(SESSION_ACCOUNTS):
+                if account.get('active', False):
+                    account_id = f"account_{i}"
+                    
+                    print(f"🔄 جاري تحديث جلسة الحساب {account['username']}...")
+                    
+                    result = self.login_account(account['username'], account['password'])
+                    if result['success']:
+                        self.sessions[account_id] = {
+                            'username': account['username'],
+                            'cookies': result['cookies'],
+                            'cookie_string': result['cookie_string'],
+                            'last_refresh': datetime.now().isoformat(),
+                            'active': True,
+                            'usage_count': self.sessions.get(account_id, {}).get('usage_count', 0)
+                        }
+                        self.last_refresh[account_id] = datetime.now()
+                        
+                        add_cookie(result['cookie_string'], f"جلسة تلقائية - {account['username']}")
+                        
+                        print(f"✅ تم تحديث جلسة الحساب {account['username']}")
+                    else:
+                        print(f"❌ فشل تحديث جلسة الحساب {account['username']}: {result.get('error')}")
+            
+            self.save_sessions()
+            auto_settings = load_auto_login_settings()
+            auto_settings["last_run"] = datetime.now().isoformat()
+            save_auto_login_settings(auto_settings)
+    
+    def start_refresh_thread(self):
+        """بدء تشغيل خيط التحديث - معطل على Vercel"""
+        # على Vercel، نعطل التشغيل التلقائي المستمر
+        pass
+    
+    def stop_refresh_thread(self):
+        """إيقاف خيط التحديث"""
+        self.stop_refresh = True
+    
+    def set_auto_login_state(self, enabled):
+        """تعيين حالة التسجيل التلقائي"""
+        self.auto_login_enabled = enabled
+        auto_settings = load_auto_login_settings()
+        auto_settings["enabled"] = enabled
+        save_auto_login_settings(auto_settings)
+        
+        # إذا تم التشغيل، نقوم بتحديث الجلسات مرة واحدة
+        if enabled:
+            threading.Thread(target=self.refresh_all_sessions, daemon=True).start()
+    
+    def get_best_session(self):
+        with self.lock:
+            active_sessions = []
+            for account_id, session_data in self.sessions.items():
+                if session_data.get('active', False):
+                    last_refresh = datetime.fromisoformat(session_data.get('last_refresh', datetime.now().isoformat()))
+                    if (datetime.now() - last_refresh).total_seconds() < self.refresh_interval * 60:
+                        active_sessions.append({
+                            'id': account_id,
+                            'cookies': session_data['cookies'],
+                            'cookie_string': session_data['cookie_string'],
+                            'usage_count': session_data.get('usage_count', 0),
+                            'username': session_data.get('username', '')
+                        })
+            
+            if not active_sessions:
+                return None
+            
+            best_session = min(active_sessions, key=lambda x: x['usage_count'])
+            
+            if best_session['id'] in self.sessions:
+                self.sessions[best_session['id']]['usage_count'] = self.sessions[best_session['id']].get('usage_count', 0) + 1
+            
+            return best_session
+
+session_manager = SessionManager()
+session_manager.load_sessions()
+
+# تحميل إعدادات التسجيل التلقائي
+auto_settings = load_auto_login_settings()
+session_manager.set_auto_login_state(auto_settings.get("enabled", False))
+
+# ========== دوال مساعدة للملفات ==========
+def load_json_file(filename, default=None):
+    """تحميل البيانات من الذاكرة (بدلاً من الملفات)"""
+    if default is None:
+        default = {}
+    
+    # تعيين المفاتيح المناسبة للملفات المختلفة
+    file_mapping = {
+        "student_codes.json": "student_codes",
+        "access_codes.json": "access_codes",
+        "settings.json": "settings",
+        "whitelist.json": "whitelist",
+        "cookies.json": "cookies",
+        "banned_student_codes.json": "banned_student_codes",
+        "active_sessions.json": "sessions",
+        "whitelist_mode.json": "whitelist_mode",
+        "auto_login_settings.json": "auto_login_settings"
+    }
+    
+    key = file_mapping.get(filename)
+    if key and key in MEMORY_STORAGE:
+        return MEMORY_STORAGE[key]
+    
+    return default
+
+def save_json_file(filename, data):
+    """حفظ البيانات في الذاكرة (بدلاً من الملفات)"""
+    file_mapping = {
+        "student_codes.json": "student_codes",
+        "access_codes.json": "access_codes",
+        "settings.json": "settings",
+        "whitelist.json": "whitelist",
+        "cookies.json": "cookies",
+        "banned_student_codes.json": "banned_student_codes",
+        "active_sessions.json": "sessions",
+        "whitelist_mode.json": "whitelist_mode",
+        "auto_login_settings.json": "auto_login_settings"
+    }
+    
+    key = file_mapping.get(filename)
+    if key:
+        MEMORY_STORAGE[key] = data
+
 def load_student_codes():
-    """تحميل قاعدة بيانات أكواد الطلاب"""
-    return MEMORY_STORAGE.get("student_codes", {})
+    return load_json_file(STUDENT_CODES_FILE, {})
 
 def save_student_codes(codes):
-    """حفظ قاعدة بيانات أكواد الطلاب"""
-    MEMORY_STORAGE["student_codes"] = codes
+    save_json_file(STUDENT_CODES_FILE, codes)
 
 def get_user_data(user_id):
-    """جلب بيانات المستخدم (الكود، الباسورد، IP)"""
     codes = load_student_codes()
     user_id_str = str(user_id)
     
@@ -67,7 +367,6 @@ def get_user_data(user_id):
         return {}
 
 def set_user_data(user_id, student_code, password=None, ip_address=None):
-    """تسجيل بيانات المستخدم مع كلمة المرور والـ IP"""
     codes = load_student_codes()
     user_id_str = str(user_id)
     
@@ -88,19 +387,7 @@ def set_user_data(user_id, student_code, password=None, ip_address=None):
     codes[user_id_str]["updated_at"] = datetime.now().isoformat()
     save_student_codes(codes)
 
-def get_user_student_code(user_id):
-    """جلب كود الطالب المسجل للمستخدم"""
-    user_data = get_user_data(user_id)
-    if isinstance(user_data, dict):
-        return user_data.get("student_code")
-    return None
-
-def set_user_student_code(user_id, student_code):
-    """تسجيل كود الطالب للمستخدم"""
-    set_user_data(user_id, student_code)
-
 def get_user_ip(request):
-    """الحصول على عنوان IP الحقيقي للمستخدم"""
     if request.headers.get('X-Forwarded-For'):
         return request.headers.get('X-Forwarded-For').split(',')[0].strip()
     elif request.headers.get('X-Real-IP'):
@@ -109,86 +396,58 @@ def get_user_ip(request):
         return request.remote_addr or '0.0.0.0'
 
 def load_access_codes():
-    """تحميل أكواد الوصول"""
-    return MEMORY_STORAGE.get("access_codes", {})
+    return load_json_file(ACCESS_CODES_FILE, {})
 
 def save_access_codes(codes):
-    """حفظ أكواد الوصول"""
-    MEMORY_STORAGE["access_codes"] = codes
+    save_json_file(ACCESS_CODES_FILE, codes)
 
 def load_settings():
-    """تحميل الإعدادات"""
-    return MEMORY_STORAGE.get("settings", {
+    settings = load_json_file(SETTINGS_FILE, {
         "single_code_per_user": True,
         "subscription_required": True,
         "maintenance_mode": False,
         "cookie_rotation": True,
-        "max_cookie_uses": 50
+        "max_cookie_uses": 50,
+        "show_transcript": True,
+        "transcript_only": False
     })
+    return settings
 
 def save_settings(settings):
-    """حفظ الإعدادات"""
-    MEMORY_STORAGE["settings"] = settings
+    save_json_file(SETTINGS_FILE, settings)
 
 def load_whitelist():
-    """تحميل قائمة البيض"""
-    return MEMORY_STORAGE.get("whitelist", [])
+    return load_json_file(WHITELIST_FILE, [])
 
 def save_whitelist(whitelist):
-    """حفظ قائمة البيض"""
-    MEMORY_STORAGE["whitelist"] = whitelist
+    save_json_file(WHITELIST_FILE, whitelist)
 
 def load_banned_users():
-    """تحميل قائمة المحظورين"""
     return MEMORY_STORAGE.get("banned_users", set())
 
 def save_banned_user(user_id):
-    """حفظ مستخدم محظور"""
-    banned = load_banned_users()
+    banned = MEMORY_STORAGE.get("banned_users", set())
     banned.add(str(user_id))
     MEMORY_STORAGE["banned_users"] = banned
 
 def load_banned_student_codes():
-    """تحميل قائمة أكواد الطلاب المحظورة"""
-    return MEMORY_STORAGE.get("banned_student_codes", [])
+    return load_json_file(BANNED_STUDENT_CODES_FILE, [])
 
 def save_banned_student_codes(codes):
-    """حفظ قائمة أكواد الطلاب المحظورة"""
-    MEMORY_STORAGE["banned_student_codes"] = codes
-
-def add_banned_student_code(code):
-    """إضافة كود طالب إلى قائمة المحظورين"""
-    codes = load_banned_student_codes()
-    if code not in codes:
-        codes.append(code)
-        save_banned_student_codes(codes)
-        return True
-    return False
-
-def remove_banned_student_code(code):
-    """إزالة كود طالب من قائمة المحظورين"""
-    codes = load_banned_student_codes()
-    if code in codes:
-        codes.remove(code)
-        save_banned_student_codes(codes)
-        return True
-    return False
+    save_json_file(BANNED_STUDENT_CODES_FILE, codes)
 
 def is_banned_student_code(student_code):
-    """التحقق من كون كود الطالب محظوراً"""
     banned_codes = load_banned_student_codes()
     return student_code in banned_codes
 
 def is_banned(user_id):
-    """التحقق مما إذا كان المستخدم محظوراً"""
     return str(user_id) in load_banned_users()
 
 def is_whitelisted(user_id):
-    """التحقق مما إذا كان المستخدم في قائمة البيض"""
     return str(user_id) in load_whitelist()
 
 def check_and_ban_user(user_id, student_code, password=None, ip_address=None):
-    """التحقق من كود الطالب والباسورد وحظر المستخدم إذا كان مختلف"""
+    """التحقق من كود الطالب والباسورد مع الاعتماد على IP المخزن"""
     
     if is_whitelisted(str(user_id)):
         return False, "whitelist_bypass"
@@ -200,6 +459,7 @@ def check_and_ban_user(user_id, student_code, password=None, ip_address=None):
     
     saved_code = user_data.get("student_code")
     saved_password = user_data.get("password")
+    saved_ips = user_data.get("ips", [])
     
     settings = load_settings()
     
@@ -209,16 +469,16 @@ def check_and_ban_user(user_id, student_code, password=None, ip_address=None):
     
     single_code_enabled = settings.get("single_code_per_user", True)
     
+    if single_code_enabled:
+        if saved_ips and ip_address and ip_address not in saved_ips:
+            save_banned_user(user_id)
+            return True, "banned_different_ip"
+        
+        if saved_code != student_code:
+            save_banned_user(user_id)
+            return True, "banned_different_code"
+    
     set_user_data(user_id, saved_code, None, ip_address)
-    
-    if saved_code != student_code and single_code_enabled:
-        save_banned_user(user_id)
-        return True, "banned_different_code"
-    
-    elif saved_code != student_code and not single_code_enabled:
-        new_password = password if password else saved_password
-        set_user_data(user_id, student_code, new_password, ip_address)
-        return False, "code_updated"
     
     if password and saved_password != password:
         set_user_data(user_id, student_code, password, ip_address)
@@ -227,7 +487,6 @@ def check_and_ban_user(user_id, student_code, password=None, ip_address=None):
     return False, "code_match"
 
 def mark_code_as_used(code, user_id, ip_address=None):
-    """تحديد كود الوصول كمستخدم"""
     codes = load_access_codes()
     if code in codes and isinstance(codes[code], dict):
         codes[code]["used"] = True
@@ -240,15 +499,12 @@ def mark_code_as_used(code, user_id, ip_address=None):
 
 # ========== نظام الكوكيز المحسن ==========
 def load_cookies():
-    """تحميل الكوكيز مع معلومات إضافية"""
-    return MEMORY_STORAGE.get("cookies", {})
+    return load_json_file(COOKIES_FILE, {})
 
 def save_cookies(cookies_data):
-    """حفظ الكوكيز"""
-    MEMORY_STORAGE["cookies"] = cookies_data
+    save_json_file(COOKIES_FILE, cookies_data)
 
 def add_cookie(cookie_value, description=""):
-    """إضافة كوكيز جديدة"""
     cookies = load_cookies()
     cookie_id = hashlib.md5(f"{cookie_value}{time.time()}".encode()).hexdigest()[:8]
     
@@ -269,7 +525,6 @@ def add_cookie(cookie_value, description=""):
     return cookie_id
 
 def extract_user_id_from_cookie(cookie_string):
-    """استخراج قيمة userID من سلسلة الكوكيز"""
     try:
         if not isinstance(cookie_string, str):
             return "unknown"
@@ -283,7 +538,6 @@ def extract_user_id_from_cookie(cookie_string):
     return "unknown"
 
 def get_active_cookies():
-    """جلب الكوكيز النشطة والصالحة"""
     cookies = load_cookies()
     settings = load_settings()
     max_uses = settings.get("max_cookie_uses", 50)
@@ -301,7 +555,10 @@ def get_active_cookies():
     return active
 
 def get_best_cookie():
-    """اختيار أفضل كوكيز متاحة (الأقل استخداماً)"""
+    best_session = session_manager.get_best_session()
+    if best_session:
+        return best_session['cookie_string']
+    
     active = get_active_cookies()
     if not active:
         return None
@@ -309,42 +566,105 @@ def get_best_cookie():
     best_cookie = min(active, key=lambda x: x['usage_count'])
     return best_cookie['value']
 
-def increment_cookie_usage(cookie_value, success=True):
-    """زيادة عداد استخدام الكوكيز وتسجيل النتيجة"""
-    cookies = load_cookies()
-    for cid, data in cookies.items():
-        if isinstance(data, dict) and data.get("value") == cookie_value:
-            data["usage_count"] = data.get("usage_count", 0) + 1
-            data["last_used"] = datetime.now().isoformat()
-            
-            if not success:
-                data["error_count"] = data.get("error_count", 0) + 1
-                if data.get("error_count", 0) >= 3:
-                    data["is_valid"] = False
-            else:
-                data["error_count"] = 0
-            
-            save_cookies(cookies)
-            break
+def get_cookie_for_request():
+    """الحصول على أفضل كوكيز متاحة للاستخدام في الطلبات"""
+    best_session = session_manager.get_best_session()
+    if best_session:
+        return best_session['cookies']
+    
+    active = get_active_cookies()
+    if not active:
+        return None
+    
+    best_cookie_data = min(active, key=lambda x: x['usage_count'])
+    
+    cookie_value = best_cookie_data['value']
+    cookies_dict = {}
+    if isinstance(cookie_value, str):
+        parts = cookie_value.split(';')
+        for part in parts:
+            if '=' in part:
+                key, value = part.strip().split('=', 1)
+                cookies_dict[key.strip()] = value.strip()
+    
+    return cookies_dict
 
-def validate_cookie(cookie_value):
-    """التحقق من صحة الكوكيز عن طريق طلب تجريبي"""
+def increment_cookie_usage(cookie_value, success=True):
+    """زيادة عداد استخدام الكوكيز"""
+    cookies = load_cookies()
+    
+    if isinstance(cookie_value, dict):
+        cookie_parts = []
+        for key, value in cookie_value.items():
+            cookie_parts.append(f"{key}={value}")
+        cookie_string = ';'.join(cookie_parts)
+    else:
+        cookie_string = cookie_value
+    
+    for cid, data in cookies.items():
+        if isinstance(data, dict):
+            stored_value = data.get("value", "")
+            if stored_value == cookie_string:
+                data["usage_count"] = data.get("usage_count", 0) + 1
+                data["last_used"] = datetime.now().isoformat()
+                
+                if not success:
+                    data["error_count"] = data.get("error_count", 0) + 1
+                    if data.get("error_count", 0) >= 3:
+                        data["is_valid"] = False
+                else:
+                    data["error_count"] = 0
+                
+                save_cookies(cookies)
+                break
+
+# ========== دوال جلب البيانات من الجامعة ==========
+def get_student_transcript_with_cookies(student_id, cookies_dict):
+    """جلب السجل الأكاديمي باستخدام الكوكيز المحفوظة"""
     try:
         session_req = requests.Session()
         
-        if isinstance(cookie_value, str):
-            if ';' in cookie_value:
-                for part in cookie_value.split(';'):
-                    if '=' in part:
-                        key, value = part.strip().split('=', 1)
-                        session_req.cookies.set(key.strip(), value.strip())
-            else:
-                session_req.cookies.set('userID', cookie_value)
+        if cookies_dict:
+            session_req.cookies.update(cookies_dict)
+        
+        param2 = {
+            'InstID': student_id
+        }
+        
+        response = session_req.get(DATA_URL, params={
+            'param0': 'Reports.RegisterCert',
+            'param1': 'getTranscript',
+            'param2': json.dumps(param2)
+        }, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json, text/javascript, */*; q=0.01'
+        }, timeout=30)
+        
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                return data, None
+            except:
+                return None, "خطأ في تحليل بيانات السجل الأكاديمي"
+        else:
+            return None, f"HTTP Error: {response.status_code}"
+            
+    except Exception as e:
+        return None, str(e)
+
+def get_student_grades_with_cookies(student_id, cookies_dict):
+    """جلب الدرجات الأساسية باستخدام الكوكيز المحفوظة"""
+    try:
+        session_req = requests.Session()
+        
+        if cookies_dict:
+            session_req.cookies.update(cookies_dict)
         
         param2 = {
             'ScopeID': '179.11.',
             'ScopeProgID': '12.',
-            'StudentCurrentID': 'test',
+            'StudentCurrentID': student_id,
             'silang': 'A'
         }
         
@@ -352,15 +672,43 @@ def validate_cookie(cookie_value):
             'param0': 'Reports.StudentData',
             'param1': 'getStudentCourse',
             'param2': json.dumps(param2)
-        }, timeout=10)
+        }, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json, text/javascript, */*; q=0.01'
+        }, timeout=30)
         
-        return response.status_code == 200
-    except:
-        return False
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                return data, None
+            except:
+                return None, "خطأ في تحليل البيانات"
+        else:
+            return None, f"HTTP Error: {response.status_code}"
+            
+    except Exception as e:
+        return None, str(e)
 
-# ========== دوال الاتصال بالجامعة ==========
+def get_both_results_with_cookies(student_id, cookies_dict):
+    """جلب كلا النتيجتين باستخدام الكوكيز المحفوظة"""
+    transcript_data, transcript_error = get_student_transcript_with_cookies(student_id, cookies_dict)
+    grades_data, grades_error = get_student_grades_with_cookies(student_id, cookies_dict)
+    
+    if transcript_data or grades_data:
+        increment_cookie_usage(cookies_dict, success=True)
+    else:
+        increment_cookie_usage(cookies_dict, success=False)
+    
+    return {
+        'grades': grades_data,
+        'grades_error': grades_error,
+        'transcript': transcript_data,
+        'transcript_error': transcript_error,
+        'success': (transcript_data is not None) or (grades_data is not None)
+    }
+
 def login_to_university(student_id, password):
-    """تسجيل الدخول إلى نظام الجامعة"""
     session_req = requests.Session()
     
     login_data = {
@@ -402,7 +750,6 @@ def login_to_university(student_id, password):
         return None, f"UNKNOWN_ERROR: {str(e)}"
 
 def get_student_grades(session_req, student_id):
-    """جلب درجات الطالب"""
     try:
         param2 = {
             'ScopeID': '179.11.',
@@ -435,51 +782,803 @@ def get_student_grades(session_req, student_id):
     except Exception as e:
         return None, str(e)
 
-def get_free_result_with_static_cookie(student_id, cookie_value):
-    """جلب النتيجة باستخدام كوكيز ثابتة (محسنة)"""
+def get_student_transcript(session_req, student_id):
     try:
-        session_req = requests.Session()
-        
-        if isinstance(cookie_value, str):
-            if ';' in cookie_value:
-                for part in cookie_value.split(';'):
-                    if '=' in part:
-                        key, value = part.strip().split('=', 1)
-                        session_req.cookies.set(key.strip(), value.strip())
-            else:
-                session_req.cookies.set('userID', cookie_value)
-        
         param2 = {
-            'ScopeID': '179.11.',
-            'ScopeProgID': '12.',
-            'StudentCurrentID': student_id,
-            'silang': 'A'
+            'InstID': student_id
         }
         
         response = session_req.get(DATA_URL, params={
-            'param0': 'Reports.StudentData',
-            'param1': 'getStudentCourse',
+            'param0': 'Reports.RegisterCert',
+            'param1': 'getTranscript',
             'param2': json.dumps(param2)
         }, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'X-Requested-With': 'XMLHttpRequest'
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json, text/javascript, */*; q=0.01'
         }, timeout=30)
         
         if response.status_code == 200:
             try:
                 data = response.json()
-                increment_cookie_usage(cookie_value, success=True)
-                return {'success': True, 'data': data}
+                return data, None
             except:
-                increment_cookie_usage(cookie_value, success=False)
-                return {'success': False, 'message': 'خطأ في تحليل البيانات'}
+                return None, "خطأ في تحليل بيانات السجل الأكاديمي"
         else:
-            increment_cookie_usage(cookie_value, success=False)
-            return {'success': False, 'message': f'فشل الاتصال: {response.status_code}'}
+            return None, f"HTTP Error: {response.status_code}"
             
     except Exception as e:
-        increment_cookie_usage(cookie_value, success=False)
-        return {'success': False, 'message': str(e)}
+        return None, str(e)
+
+def get_both_results_with_session(session_req, student_id):
+    grades_data, grades_error = get_student_grades(session_req, student_id)
+    transcript_data, transcript_error = get_student_transcript(session_req, student_id)
+    
+    return {
+        'grades': grades_data,
+        'grades_error': grades_error,
+        'transcript': transcript_data,
+        'transcript_error': transcript_error
+    }
+
+def grade_translation(grade):
+    translations = {
+        'A+': ('أ+', 'امتياز مرتفع', '#2ecc71'),
+        'A': ('أ', 'امتياز', '#27ae60'),
+        'A-': ('أ-', 'امتياز منخفض', '#2ecc71'),
+        'B+': ('ب+', 'جيد جداً مرتفع', '#3498db'),
+        'B': ('ب', 'جيد جداً', '#2980b9'),
+        'B-': ('ب-', 'جيد جداً منخفض', '#3498db'),
+        'C+': ('ج+', 'جيد مرتفع', '#f39c12'),
+        'C': ('ج', 'جيد', '#e67e22'),
+        'C-': ('ج-', 'جيد منخفض', '#f39c12'),
+        'D+': ('د+', 'مقبول مرتفع', '#f1c40f'),
+        'D': ('د', 'مقبول', '#f39c12'),
+        'F': ('هـ', 'راسب', '#e74c3c'),
+        'IP': ('جاري', 'جاري', '#95a5a6'),
+        'W': ('منسحب', 'منسحب', '#7f8c8d'),
+        'P': ('ناجح', 'ناجح', '#2ecc71'),
+        'Fr': ('تأجيل', 'تأجيل', '#95a5a6')
+    }
+    return translations.get(grade, (grade, grade, '#ffffff'))
+
+def create_course_detail_page(course_data):
+    """إنشاء صفحة تفاصيل المقرر مع جميع الدرجات"""
+    
+    grade_fields = [
+        ('CourseWorkDegree', 'CourseWorkMaxDegree', 'أعمال سنة'),
+        ('PractDegree', 'PractMaxDegree', 'العملي'),
+        ('OralDegree', 'OralMaxDegree', 'الشفوي'),
+        ('MidtermDegree', 'MidtermMaxDegree', 'الامتحان النصفي'),
+        ('FinaltermDegree', 'FinaltermMaxDegree', 'النهائي'),
+        ('ClinicDegree', 'ClinicMaxDegree', 'أعمال سنة'),
+        ('Midterm1Degree', 'Midterm1MaxDegree', 'الامتحان النصفي الأول'),
+        ('Midterm2Degree', 'Midterm2MaxDegree', 'الامتحان النصفي الثاني'),
+        ('ReportsDegree', 'ReportsMaxDegree', 'الفاينال'),
+        ('MCQDegree', 'MCQMaxDegree', 'اختيار من متعدد'),
+        ('OSCEDegree', 'OSCEMaxDegree', 'OSCE'),
+        ('ESSAYDegree', 'ESSAYMaxDegree', 'مقالي'),
+        ('ModelBDegree', 'ModelBMaxDegree', 'موديل B'),
+        ('ModelCDegree', 'ModelCMaxDegree', 'موديل C'),
+        ('ModelDDegree', 'ModelDMaxDegree', 'موديل D'),
+        ('SkillsDegree', 'SkillsMaxDegree', 'المهارات'),
+        ('AttitudeDegree', 'AttitudeMaxDegree', 'السلوك'),
+        ('TeamworkDegree', 'TeamworkMaxDegree', 'العمل الجماعي'),
+        ('OspeDegree', 'OspeMaxDegree', 'OSPE'),
+        ('Ospe2Degree', 'Ospe2MaxDegree', 'OSPE 2'),
+        ('SkillexamDegree', 'SkillexamMaxDegree', 'امتحان المهارات'),
+        ('Skillexam2Degree', 'Skillexam2MaxDegree', 'امتحان المهارات 2'),
+        ('FinalMCQDegree', 'FinalMCQMaxDegree', 'النهائي MCQ'),
+        ('FinalEssayDegree', 'FinalEssayMaxDegree', 'النهائي مقالي'),
+        ('SEQDegree', 'SEQMaxDegree', 'SEQ'),
+        ('ContDegree', 'ContMaxDegree', 'المستمر'),
+        ('ActivityDegree', 'ActivityMaxDegree', 'النشاط')
+    ]
+    
+    course_name = course_data.get('CourseName', 'غير معروف').replace('|', ' ').strip()
+    course_code = course_data.get('CourseCode', '')
+    credit = course_data.get('CourseCredit', '0')
+    grade = course_data.get('Grade', '')
+    total_degree = course_data.get('Degree', '')
+    course_type = course_data.get('courseType', '').replace('|', ' - ')
+    course_status = course_data.get('CourseStatus', '')
+    
+    translated = grade_translation(grade)
+    grade_ar = translated[0] if translated else grade
+    grade_desc = translated[1] if len(translated) > 1 else ''
+    grade_color = translated[2] if len(translated) > 2 else '#ffffff'
+    
+    available_grades = []
+    total_percentage = 0
+    total_count = 0
+    
+    for degree_field, max_field, label in grade_fields:
+        degree_value = course_data.get(degree_field)
+        max_value = course_data.get(max_field)
+        
+        if degree_value is not None and degree_value != '' and degree_value != 'غ' and str(degree_value).strip():
+            try:
+                degree_float = float(degree_value) if degree_value not in ['غ', ''] else None
+                max_float = float(max_value) if max_value and max_value not in ['غ', ''] else None
+                
+                if degree_float is not None:
+                    if max_float is not None and max_float > 0:
+                        percentage = (degree_float / max_float) * 100
+                        color = '#2ecc71' if percentage >= 60 else '#e74c3c' if percentage < 50 else '#f39c12'
+                    else:
+                        color = '#3498db'
+                        percentage = 0
+                    
+                    available_grades.append({
+                        'label': label,
+                        'value': degree_value,
+                        'max': max_value if max_value else '—',
+                        'color': color,
+                        'percentage': percentage
+                    })
+                    
+                    if max_float and max_float > 0:
+                        total_percentage += percentage
+                        total_count += 1
+            except (ValueError, TypeError):
+                available_grades.append({
+                    'label': label,
+                    'value': degree_value,
+                    'max': max_value if max_value else '—',
+                    'color': '#95a5a6',
+                    'percentage': 0
+                })
+    
+    avg_percentage = total_percentage / total_count if total_count > 0 else 0
+    
+    try:
+        total_degree_float = float(total_degree) if total_degree else 0
+        total_percentage_value = (total_degree_float / 100) * 100 if total_degree_float else 0
+        total_color = '#2ecc71' if total_percentage_value >= 60 else '#e74c3c' if total_percentage_value < 50 else '#f39c12'
+    except (ValueError, TypeError):
+        total_percentage_value = 0
+        total_color = '#95a5a6'
+    
+    available_grades.sort(key=lambda x: x['percentage'], reverse=True)
+    
+    html = f'''<!DOCTYPE html>
+    <html dir="rtl" lang="ar">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+        <title>تفاصيل المقرر - {course_name}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            
+            body {{
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                padding: 10px;
+                font-family: 'Tajawal', 'Poppins', sans-serif;
+            }}
+            
+            .container {{
+                max-width: 800px;
+                margin: 0 auto;
+            }}
+            
+            .card {{
+                background: white;
+                border-radius: 20px;
+                padding: 20px;
+                margin-bottom: 20px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            }}
+            
+            .header {{
+                background: white;
+                border-radius: 20px;
+                padding: 20px;
+                margin-bottom: 20px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            }}
+            
+            .header h1 {{
+                color: #667eea;
+                font-size: clamp(18px, 5vw, 24px);
+                word-break: break-word;
+            }}
+            
+            .back-btn {{
+                background: #6c757d;
+                color: white;
+                padding: 10px 20px;
+                border-radius: 10px;
+                text-decoration: none;
+                display: inline-block;
+                text-align: center;
+                font-weight: 500;
+                align-self: flex-start;
+            }}
+            
+            .back-btn:hover {{
+                background: #5a6268;
+            }}
+            
+            .course-info {{
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 20px;
+                border-radius: 15px;
+                margin-bottom: 20px;
+            }}
+            
+            .info-row {{
+                display: flex;
+                flex-direction: column;
+                padding: 8px 0;
+                border-bottom: 1px solid rgba(255,255,255,0.2);
+            }}
+            
+            .info-row:last-child {{
+                border-bottom: none;
+            }}
+            
+            .info-label {{
+                font-weight: 600;
+                font-size: 14px;
+                opacity: 0.9;
+                margin-bottom: 3px;
+            }}
+            
+            .info-value {{
+                font-size: 16px;
+                font-weight: 500;
+                word-break: break-word;
+            }}
+            
+            .grade-badge {{
+                display: inline-block;
+                padding: 5px 15px;
+                border-radius: 20px;
+                font-weight: bold;
+                background: rgba(255,255,255,0.2);
+            }}
+            
+            .total-grade {{
+                background: white;
+                border-radius: 15px;
+                padding: 15px;
+                margin-bottom: 20px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            }}
+            
+            .total-label {{
+                color: #666;
+                font-size: 14px;
+                margin-bottom: 5px;
+            }}
+            
+            .total-value {{
+                font-size: 32px;
+                font-weight: bold;
+                color: {total_color};
+            }}
+            
+            .total-percentage {{
+                font-size: 14px;
+                color: #666;
+                margin-top: 5px;
+            }}
+            
+            .grades-grid {{
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }}
+            
+            .grade-item {{
+                background: #f8f9fa;
+                border-radius: 12px;
+                padding: 15px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                border-right: 5px solid {total_color};
+            }}
+            
+            .grade-label {{
+                font-weight: 600;
+                color: #333;
+                font-size: 16px;
+            }}
+            
+            .grade-values {{
+                display: flex;
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 10px;
+            }}
+            
+            .grade-score {{
+                font-size: 18px;
+                font-weight: bold;
+                color: {total_color};
+            }}
+            
+            .grade-max {{
+                color: #666;
+                font-size: 14px;
+            }}
+            
+            .grade-progress {{
+                width: 100%;
+                height: 8px;
+                background: #e0e0e0;
+                border-radius: 4px;
+                overflow: hidden;
+            }}
+            
+            .progress-bar {{
+                height: 100%;
+                background: {total_color};
+                border-radius: 4px;
+                transition: width 0.3s ease;
+            }}
+            
+            .stats-summary {{
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
+                margin-top: 20px;
+            }}
+            
+            .stat-box {{
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 12px;
+                text-align: center;
+            }}
+            
+            .stat-number {{
+                font-size: 20px;
+                font-weight: bold;
+                color: #667eea;
+            }}
+            
+            .stat-label {{
+                font-size: 12px;
+                color: #666;
+                margin-top: 5px;
+            }}
+            
+            @media (min-width: 600px) {{
+                .grades-grid {{
+                    grid-template-columns: repeat(2, 1fr);
+                }}
+                
+                .info-row {{
+                    flex-direction: row;
+                    align-items: center;
+                }}
+                
+                .info-label {{
+                    min-width: 150px;
+                    margin-bottom: 0;
+                }}
+                
+                .header {{
+                    flex-direction: row;
+                    justify-content: space-between;
+                    align-items: center;
+                }}
+                
+                .back-btn {{
+                    align-self: auto;
+                }}
+            }}
+            
+            @media (min-width: 900px) {{
+                .grades-grid {{
+                    grid-template-columns: repeat(3, 1fr);
+                }}
+            }}
+            
+            .no-data {{
+                text-align: center;
+                padding: 30px;
+                color: #666;
+                font-size: 16px;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>📚 تفاصيل المقرر</h1>
+                <a href="javascript:history.back()" class="back-btn">🔙 رجوع</a>
+            </div>
+            
+            <div class="card">
+                <div class="course-info">
+                    <div class="info-row">
+                        <span class="info-label">اسم المقرر:</span>
+                        <span class="info-value">{course_name}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">كود المقرر:</span>
+                        <span class="info-value">{course_code}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">الساعات المعتمدة:</span>
+                        <span class="info-value">{credit}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">نوع المقرر:</span>
+                        <span class="info-value">{course_type}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">التقدير:</span>
+                        <span class="info-value">
+                            <span class="grade-badge" style="background: {grade_color}; color: white;">
+                                {grade_ar} {grade_desc}
+                            </span>
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="total-grade">
+                    <div class="total-label">الدرجة الكلية</div>
+                    <div class="total-value">{total_degree}%</div>
+                    <div class="total-percentage">من 100 درجة</div>
+                </div>
+                
+                <h3 style="margin-bottom: 15px; color: #333;">📊 تفاصيل الدرجات</h3>
+                
+                <div class="grades-grid">
+    '''
+    
+    if available_grades:
+        for grade in available_grades:
+            html += f'''
+                    <div class="grade-item" style="border-right-color: {grade['color']};">
+                        <div class="grade-label">{grade['label']}</div>
+                        <div class="grade-values">
+                            <span class="grade-score" style="color: {grade['color']};">{grade['value']}</span>
+                            <span class="grade-max">/ {grade['max']}</span>
+                        </div>
+                        <div class="grade-progress">
+                            <div class="progress-bar" style="width: {grade['percentage']}%; background: {grade['color']};"></div>
+                        </div>
+                    </div>
+            '''
+    else:
+        html += '''
+                    <div class="no-data">
+                        لا توجد درجات تفصيلية متاحة لهذا المقرر
+                    </div>
+        '''
+    
+    html += f'''
+                </div>
+                
+                <div class="stats-summary">
+                    <div class="stat-box">
+                        <div class="stat-number">{len(available_grades)}</div>
+                        <div class="stat-label">عدد التقييمات</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">{avg_percentage:.1f}%</div>
+                        <div class="stat-label">متوسط الأداء</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    '''
+    
+    return html
+
+def format_transcript_data(transcript_data):
+    """تنسيق بيانات السجل الأكاديمي للعرض مع الدرجات التفصيلية"""
+    if not transcript_data or not isinstance(transcript_data, dict):
+        return "<div class='error-message'>لا توجد بيانات سجل أكاديمي متاحة</div>"
+    
+    html = ""
+    
+    try:
+        total_quality_points = float(transcript_data.get("total66QualityPoints", 0) or 0)
+        total_actual_hours = float(transcript_data.get("sem663TotalActualHours", 0) or 0)
+        overall_cumulative_gpa = total_quality_points / total_actual_hours if total_actual_hours > 0 else 0
+        
+        stu_name = transcript_data.get('stuName', 'غير معروف')
+        stu_id = transcript_data.get('StuID', 'غير معروف')
+        level = transcript_data.get('level', 'غير معروف')
+        
+        if "|" in level:
+            level = level.split("|")[0].strip()
+        
+        html += f"""
+        <div class="student-info-card">
+            <div class="info-row">
+                <div class="info-label">👤 اسم الطالب:</div>
+                <div class="info-value">{stu_name}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">🆔 رقم الطالب:</div>
+                <div class="info-value">{stu_id}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">📊 المستوى:</div>
+                <div class="info-value">{level}</div>
+            </div>
+        </div>
+        
+        <div class="gpa-summary">
+            <div class="gpa-card total">
+                <div class="gpa-label">المعدل التراكمي الكلي</div>
+                <div class="gpa-value">{overall_cumulative_gpa:.2f}</div>
+            </div>
+            <div class="gpa-card hours">
+                <div class="gpa-label">الساعات الكلية</div>
+                <div class="gpa-value">{total_actual_hours:.0f}</div>
+            </div>
+            <div class="gpa-card points">
+                <div class="gpa-label">النقاط التراكمية</div>
+                <div class="gpa-value">{total_quality_points:.2f}</div>
+            </div>
+        </div>
+        """
+        
+        if 'StuSemesterData' in transcript_data:
+            for year_idx, year_data in enumerate(transcript_data['StuSemesterData']):
+                acad_year = year_data.get('AcadYearName', 'سنة غير معروفة')
+                
+                for sem_idx, semester in enumerate(year_data.get('Semesters', [])):
+                    sem_name = semester.get('SemesterName', 'فصل غير معروف')
+                    full_name = f"{acad_year} - {sem_name}"
+                    
+                    sem_gpa = semester.get('GPA', '0')
+                    curr_gpa = semester.get('CurrGPA', '0')
+                    accum_perc = semester.get('AccumPerc', '0')
+                    curr_perc = semester.get('CurrPerc', '0')
+                    reg_hours = semester.get('RegHrs', '0')
+                    curr_ch = semester.get('CurrCH', '0')
+                    
+                    semester_status = semester.get('CourseStatus', '').strip()
+                    
+                    courses = semester.get('Courses', [])
+                    
+                    html += f"""
+                    <div class="semester-card">
+                        <div class="semester-header">
+                            <div class="semester-title">{full_name}</div>
+                            <div class="semester-stats">
+                                <span class="stat-badge">📊 المعدل الفصلي: <strong>{sem_gpa}</strong></span>
+                                <span class="stat-badge">📈 المعدل التراكمي: <strong>{curr_gpa}</strong></span>
+                                <span class="stat-badge">📊 النسبة الفصلية: <strong>{curr_perc}%</strong></span>
+                                <span class="stat-badge">📈 النسبة التراكمية: <strong>{accum_perc}%</strong></span>
+                                <span class="stat-badge">📚 الساعات المسجلة: <strong>{reg_hours}</strong></span>
+                                <span class="stat-badge">✅ الساعات المكتسبة: <strong>{curr_ch}</strong></span>
+                            </div>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="courses-table-detailed">
+                                <thead>
+                                    <tr>
+                                        <th>المادة</th>
+                                        <th>الساعات</th>
+                                        <th>التقدير</th>
+                                        <th>الدرجة</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                    """
+                    
+                    for course in courses:
+                        course_name = course.get('CourseName', '').replace('|', ' ').strip()
+                        credit = course.get('CourseCredit', '0')
+                        grade = course.get('Grade', '')
+                        degree = course.get('Degree', '')
+                        course_code = course.get('CourseCode', '')
+                        course_id = course.get('CourseID', '')
+                        
+                        unique_id = f"{course_id}_{course_code}_{int(time.time())}".replace('.', '_')
+                        
+                        if not grade or grade == "":
+                            if "no fees" in str(course.get('CourseStatus', '')).lower():
+                                grade = "غير مسدد"
+                            else:
+                                grade = ""
+                        
+                        translated = grade_translation(grade)
+                        grade_display = translated[0] if translated else grade
+                        grade_color = translated[2] if len(translated) > 2 else '#ffffff'
+                        
+                        course_data_encoded = urllib.parse.quote(json.dumps(course))
+                        
+                        html += f"""
+                                    <tr onclick="window.location.href='/course_details/{course_data_encoded}'" style="cursor: pointer;">
+                                        <td class="course-name">
+                                            <div class="course-name-container">
+                                                <span class="course-name-text">{course_name}</span>
+                                                <small class="course-code">{course_code}</small>
+                                            </div>
+                                        </td>
+                                        <td class="course-credit">{credit}</td>
+                                        <td class="course-grade" style="color: {grade_color}; font-weight: bold;">{grade_display}</td>
+                                        <td class="course-degree">{degree}</td>
+                                    </tr>
+                        """
+                    
+                    html += """
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    """
+        
+    except Exception as e:
+        html += f"<div class='error-message'>خطأ في تنسيق البيانات: {str(e)}</div>"
+    
+    return html
+
+def format_grades_data(grades_data):
+    """تنسيق بيانات الدرجات الأساسية"""
+    if not grades_data or not isinstance(grades_data, dict) or 'data' not in grades_data:
+        return ""
+    
+    html = ""
+    try:
+        first = grades_data['data'][0] if grades_data['data'] else {}
+        
+        html += f"""
+        <div class="info">
+            <div class="info-row">
+                <div class="info-label">👤 اسم الطالب</div>
+                <div class="info-value">{first.get('StuName', 'غير متوفر')}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">🆔 رقم الطالب</div>
+                <div class="info-value">{first.get('studentID', first.get('Code', 'غير متوفر'))}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">🏫 الكلية</div>
+                <div class="info-value">{(first.get('faculty', 'غير متوفر')).replace('|',' - ')}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">🎓 المستوى</div>
+                <div class="info-value">{(first.get('lvl', 'غير متوفر')).replace('|',' - ')}</div>
+            </div>
+            <div class="info-row">
+                <div class="info-label">📚 البرنامج</div>
+                <div class="info-value">{(first.get('prog', 'غير متوفر')).replace('|',' - ')}</div>
+            </div>
+        </div>
+        
+        <div class="stats-row">
+            <div class="stat-box">
+                <div class="stat-icon">📊</div>
+                <div class="stat-content">
+                    <div class="stat-label">المعدل التراكمي</div>
+                    <div class="stat-value">{first.get('stuGPA', '0.00')}</div>
+                </div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-icon">⏱️</div>
+                <div class="stat-content">
+                    <div class="stat-label">الساعات المكتسبة</div>
+                    <div class="stat-value">{first.get('stuEarnedHours', '0')}</div>
+                </div>
+            </div>
+        </div>
+        
+        <style>
+        .stats-row {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 20px 0;
+            width: 100%;
+        }}
+        
+        .stat-box {{
+            background: linear-gradient(135deg, #d4af37, #1e3a8a);
+            color: white;
+            padding: 12px 8px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 5px 15px rgba(212, 175, 55, 0.3);
+            min-width: 0;
+        }}
+        
+        .stat-icon {{
+            font-size: 22px;
+            min-width: 30px;
+            text-align: center;
+        }}
+        
+        .stat-content {{
+            flex: 1;
+            min-width: 0;
+        }}
+        
+        .stat-label {{
+            font-size: 11px;
+            opacity: 0.9;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        
+        .stat-value {{
+            font-size: 16px;
+            font-weight: bold;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }}
+        
+        @media (max-width: 320px) {{
+            .stat-box {{
+                padding: 10px 5px;
+                gap: 5px;
+            }}
+            
+            .stat-icon {{
+                font-size: 18px;
+                min-width: 25px;
+            }}
+            
+            .stat-label {{
+                font-size: 10px;
+            }}
+            
+            .stat-value {{
+                font-size: 14px;
+            }}
+        }}
+        
+        @media (min-width: 768px) {{
+            .stats-row {{
+                gap: 15px;
+            }}
+            
+            .stat-box {{
+                padding: 15px 12px;
+            }}
+            
+            .stat-icon {{
+                font-size: 26px;
+                min-width: 35px;
+            }}
+            
+            .stat-label {{
+                font-size: 13px;
+            }}
+            
+            .stat-value {{
+                font-size: 18px;
+            }}
+        }}
+        </style>
+        """
+    except Exception as e:
+        html = f"<div class='error-message'>خطأ في تنسيق البيانات: {str(e)}</div>"
+    
+    return html
 
 # ========== الصفحات الرئيسية ==========
 @app.route('/')
@@ -488,7 +1587,6 @@ def index():
 
 @app.route('/login', methods=['POST'])
 def login():
-    """معالج تسجيل الدخول الموحد - يتعرف تلقائياً على نوع الدخول"""
     identifier = request.form.get('identifier')
     credential = request.form.get('credential')
     user_ip = get_user_ip(request)
@@ -507,9 +1605,14 @@ def login():
         set_user_data("admin", "admin", ADMIN_PASSWORD, user_ip)
         return redirect(url_for('admin_panel'))
     
+    # التحقق من القائمة البيضاء للطلاب
+    if not is_student_whitelisted(identifier):
+        return render_template_string(LOGIN_PAGE, error="🚫 هذا الحساب غير مصرح له باستخدام النظام", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
+    
     if is_banned_student_code(identifier):
         return render_template_string(LOGIN_PAGE, error="🚫 هذا الكود محظور ولا يمكن استخدامه", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
+    # التحقق من أكواد الوصول
     access_codes = load_access_codes()
     if credential in access_codes:
         student_id = identifier
@@ -523,22 +1626,40 @@ def login():
         if code_data.get("single_use", False) and code_data.get("used", False):
             return render_template_string(LOGIN_PAGE, error="❌ هذا الكود مستخدم بالفعل", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
         
-        current_cookie = get_best_cookie()
-        if not current_cookie:
+        cookies_dict = get_cookie_for_request()
+        if not cookies_dict:
             return render_template_string(LOGIN_PAGE, error="⚠️ لا توجد كوكيز متاحة - الرجاء إضافة كوكيز أولاً", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
         
         if code_data.get("single_use", False):
             mark_code_as_used(access_code, student_id, user_ip)
         
-        result = get_free_result_with_static_cookie(student_id, current_cookie)
+        results = get_both_results_with_cookies(student_id, cookies_dict)
         
-        if not result.get('success'):
-            return render_template_string(LOGIN_PAGE, error=result.get('message', 'فشل في جلب النتيجة'), dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
+        if not results.get('success'):
+            return render_template_string(LOGIN_PAGE, error="فشل في جلب النتيجة", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
         
         set_user_data(f"access_{student_id}_{int(time.time())}", student_id, None, user_ip)
         
-        return render_template_string(RESULT_PAGE, data=result['data'], now=datetime.now(), dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
+        transcript_html = ""
+        grades_html = ""
+        
+        if settings.get('transcript_only', False):
+            transcript_html = format_transcript_data(results.get('transcript'))
+        else:
+            transcript_html = format_transcript_data(results.get('transcript')) if settings.get('show_transcript', True) and not results.get('transcript_error') else ""
+            grades_html = format_grades_data(results.get('grades'))
+        
+        return render_template_string(RESULT_PAGE, 
+                                     data=results['grades'], 
+                                     transcript_html=transcript_html,
+                                     grades_html=grades_html,
+                                     show_transcript=settings.get('show_transcript', True),
+                                     transcript_only=settings.get('transcript_only', False),
+                                     now=datetime.now(), 
+                                     dev_link=DEV_TELEGRAM_LINK, 
+                                     dev_name=DEV_TELEGRAM)
     
+    # تسجيل دخول طالب عادي
     student_id = identifier
     password = credential
     
@@ -558,12 +1679,43 @@ def login():
     session['student_id'] = student_id
     session.permanent = True
     
-    grades, error = get_student_grades(session_req, student_id)
+    cookies_dict = get_cookie_for_request()
     
-    if error:
-        return render_template_string(RESULT_PAGE, error=error, dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
+    results = get_both_results_with_cookies(student_id, cookies_dict)
     
-    return render_template_string(RESULT_PAGE, data=grades, now=datetime.now(), dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
+    if results.get('grades_error'):
+        return render_template_string(RESULT_PAGE, error=results['grades_error'], dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
+    
+    transcript_html = ""
+    grades_html = ""
+    
+    if settings.get('transcript_only', False):
+        transcript_html = format_transcript_data(results.get('transcript')) if not results.get('transcript_error') else ""
+    else:
+        transcript_html = format_transcript_data(results.get('transcript')) if settings.get('show_transcript', True) and not results.get('transcript_error') else ""
+        grades_html = format_grades_data(results.get('grades'))
+    
+    return render_template_string(RESULT_PAGE, 
+                                 data=results['grades'], 
+                                 transcript_html=transcript_html,
+                                 grades_html=grades_html,
+                                 show_transcript=settings.get('show_transcript', True),
+                                 transcript_only=settings.get('transcript_only', False),
+                                 now=datetime.now(), 
+                                 dev_link=DEV_TELEGRAM_LINK, 
+                                 dev_name=DEV_TELEGRAM)
+
+@app.route('/course_details/<path:course_data>')
+def course_details(course_data):
+    """صفحة تفاصيل المقرر"""
+    try:
+        course_data_decoded = urllib.parse.unquote(course_data)
+        course_info = json.loads(course_data_decoded)
+        
+        html = create_course_detail_page(course_info)
+        return html
+    except Exception as e:
+        return f"<div style='color: red; padding: 20px;'>خطأ في عرض تفاصيل المقرر: {str(e)}</div>"
 
 @app.route('/logout')
 def logout():
@@ -589,13 +1741,138 @@ def admin_settings():
             "subscription_required": request.form.get('subscription') == 'on',
             "maintenance_mode": request.form.get('maintenance') == 'on',
             "cookie_rotation": request.form.get('cookie_rotation') == 'on',
+            "show_transcript": request.form.get('show_transcript') == 'on',
+            "transcript_only": request.form.get('transcript_only') == 'on',
             "max_cookie_uses": int(request.form.get('max_cookie_uses', 50))
         }
         save_settings(settings)
         return redirect(url_for('admin_panel'))
     
     settings = load_settings()
-    return render_template_string(SETTINGS_PAGE, settings=settings, dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
+    whitelist_mode = load_whitelist_mode()
+    student_whitelist = load_student_whitelist()
+    auto_login_settings = load_auto_login_settings()
+    
+    return render_template_string(SETTINGS_PAGE, 
+                                 settings=settings,
+                                 whitelist_mode=whitelist_mode,
+                                 student_whitelist=student_whitelist,
+                                 auto_login_settings=auto_login_settings,
+                                 dev_link=DEV_TELEGRAM_LINK, 
+                                 dev_name=DEV_TELEGRAM)
+
+@app.route('/admin/toggle_auto_login', methods=['POST'])
+def toggle_auto_login_route():
+    """تشغيل أو إيقاف التسجيل التلقائي"""
+    if 'is_admin' not in session:
+        return jsonify({'error': 'غير مصرح'}), 403
+    
+    data = request.get_json()
+    enabled = data.get('enabled')
+    
+    # تحديث الإعدادات
+    new_state = toggle_auto_login_state(enabled)
+    
+    # تحديث حالة session manager
+    session_manager.set_auto_login_state(new_state)
+    
+    return jsonify({
+        'success': True, 
+        'enabled': new_state,
+        'message': 'تم تشغيل التسجيل التلقائي' if new_state else 'تم إيقاف التسجيل التلقائي'
+    })
+
+def toggle_auto_login_state(enabled=None):
+    """تشغيل أو إيقاف التسجيل التلقائي"""
+    settings = load_auto_login_settings()
+    if enabled is not None:
+        settings["enabled"] = enabled
+    else:
+        settings["enabled"] = not settings.get("enabled", False)
+    settings["last_updated"] = datetime.now().isoformat()
+    save_auto_login_settings(settings)
+    return settings["enabled"]
+
+@app.route('/admin/toggle_whitelist_mode', methods=['POST'])
+def toggle_whitelist_mode_route():
+    """تفعيل أو تعطيل وضع القائمة البيضاء للطلاب"""
+    if 'is_admin' not in session:
+        return jsonify({'error': 'غير مصرح'}), 403
+    
+    data = request.get_json()
+    mode = load_whitelist_mode()
+    mode['enabled'] = data.get('enabled', False)
+    save_whitelist_mode(mode)
+    return jsonify({'success': True})
+
+@app.route('/admin/upload_student_whitelist', methods=['POST'])
+def upload_student_whitelist():
+    """رفع ملف txt يحتوي على أرقام الطلاب المسموح لهم"""
+    if 'is_admin' not in session:
+        return redirect(url_for('index'))
+    
+    if 'whitelist_file' not in request.files:
+        return redirect(url_for('admin_settings'))
+    
+    file = request.files['whitelist_file']
+    if file.filename == '':
+        return redirect(url_for('admin_settings'))
+    
+    if file and file.filename.endswith('.txt'):
+        content = file.read().decode('utf-8')
+        students = set()
+        for line in content.splitlines():
+            line = line.strip()
+            if line and line.isdigit():
+                students.add(line)
+        
+        save_student_whitelist(students)
+        
+        mode = load_whitelist_mode()
+        mode['filename'] = "student_whitelist.txt"
+        save_whitelist_mode(mode)
+    
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/add_student_to_whitelist', methods=['POST'])
+def add_student_to_whitelist():
+    """إضافة كود طالب إلى القائمة البيضاء"""
+    if 'is_admin' not in session:
+        return redirect(url_for('index'))
+    
+    student_code = request.form.get('student_code')
+    if student_code and student_code.isdigit():
+        add_to_student_whitelist(student_code)
+    
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/remove_student_from_whitelist', methods=['POST'])
+def remove_student_from_whitelist():
+    """حذف كود طالب من القائمة البيضاء"""
+    if 'is_admin' not in session:
+        return redirect(url_for('index'))
+    
+    student_code = request.form.get('student_code')
+    remove_from_student_whitelist(student_code)
+    
+    return redirect(url_for('admin_settings'))
+
+@app.route('/admin/download_student_whitelist')
+def download_student_whitelist():
+    """تحميل ملف القائمة البيضاء الحالي"""
+    if 'is_admin' not in session:
+        return redirect(url_for('index'))
+    
+    whitelist = load_student_whitelist()
+    content = '\n'.join(sorted(whitelist))
+    
+    response = app.response_class(
+        response=content,
+        status=200,
+        mimetype='text/plain'
+    )
+    response.headers["Content-Disposition"] = "attachment; filename=student_whitelist.txt"
+    return response
 
 @app.route('/admin/users')
 def admin_users():
@@ -656,26 +1933,40 @@ def admin_cookies():
             if cookie_id in cookies and isinstance(cookies[cookie_id], dict):
                 cookies[cookie_id]['is_active'] = not cookies[cookie_id].get('is_active', True)
                 save_cookies(cookies)
-        elif action == 'validate':
-            cookie_id = request.form.get('cookie_id')
-            cookies = load_cookies()
-            if cookie_id in cookies and isinstance(cookies[cookie_id], dict):
-                is_valid = validate_cookie(cookies[cookie_id]['value'])
-                cookies[cookie_id]['is_valid'] = is_valid
-                cookies[cookie_id]['last_validated'] = datetime.now().isoformat()
-                save_cookies(cookies)
-        elif action == 'reset_errors':
-            cookie_id = request.form.get('cookie_id')
-            cookies = load_cookies()
-            if cookie_id in cookies and isinstance(cookies[cookie_id], dict):
-                cookies[cookie_id]['error_count'] = 0
-                cookies[cookie_id]['is_valid'] = True
-                save_cookies(cookies)
         
         return redirect(url_for('admin_cookies'))
     
     cookies = load_cookies()
-    return render_template_string(COOKIES_PAGE, cookies=cookies, dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
+    session_info = []
+    for account_id, session_data in session_manager.sessions.items():
+        session_info.append({
+            'id': account_id,
+            'username': session_data.get('username', ''),
+            'last_refresh': session_data.get('last_refresh', ''),
+            'usage_count': session_data.get('usage_count', 0),
+            'active': session_data.get('active', False)
+        })
+    
+    auto_login_settings = load_auto_login_settings()
+    
+    return render_template_string(COOKIES_PAGE, 
+                                 cookies=cookies, 
+                                 sessions=session_info,
+                                 auto_login_settings=auto_login_settings,
+                                 dev_link=DEV_TELEGRAM_LINK, 
+                                 dev_name=DEV_TELEGRAM)
+
+@app.route('/admin/sessions', methods=['POST'])
+def admin_sessions():
+    if 'is_admin' not in session:
+        return redirect(url_for('index'))
+    
+    action = request.form.get('action')
+    
+    if action == 'refresh_now':
+        threading.Thread(target=session_manager.refresh_all_sessions, daemon=True).start()
+    
+    return redirect(url_for('admin_cookies'))
 
 @app.route('/admin/access_codes', methods=['GET', 'POST'])
 def admin_access_codes():
@@ -733,7 +2024,6 @@ def admin_unban():
 
 @app.route('/admin/export_users')
 def admin_export_users():
-    """تصدير بيانات المستخدمين (الكود، الباسورد، IP)"""
     if 'is_admin' not in session:
         return redirect(url_for('index'))
     
@@ -761,47 +2051,8 @@ def admin_export_users():
     response.headers["Content-Disposition"] = "attachment; filename=users_export.json"
     return response
 
-@app.route('/admin/export_users_csv')
-def admin_export_users_csv():
-    """تصدير بيانات المستخدمين بصيغة CSV"""
-    if 'is_admin' not in session:
-        return redirect(url_for('index'))
-    
-    student_codes = load_student_codes()
-    
-    si = StringIO()
-    cw = csv.writer(si)
-    
-    cw.writerow(['معرف المستخدم', 'كود الطالب', 'كلمة المرور', 'آخر IP', 'جميع الـ IPs', 'آخر ظهور', 'آخر تحديث'])
-    
-    for user_id, data in student_codes.items():
-        if user_id != 'admin':
-            if isinstance(data, dict):
-                cw.writerow([
-                    user_id,
-                    data.get('student_code', ''),
-                    data.get('password', ''),
-                    data.get('last_ip', ''),
-                    ' | '.join(data.get('ips', []) if isinstance(data.get('ips'), list) else []),
-                    data.get('last_seen', ''),
-                    data.get('updated_at', '')
-                ])
-    
-    output = si.getvalue()
-    si.close()
-    
-    response = app.response_class(
-        response=output,
-        status=200,
-        mimetype='text/csv'
-    )
-    response.headers["Content-Disposition"] = "attachment; filename=users_export.csv"
-    response.headers["Content-type"] = "text/csv; charset=utf-8"
-    return response
-
 @app.route('/admin/user_details/<user_id>')
 def admin_user_details(user_id):
-    """عرض تفاصيل مستخدم معين"""
     if 'is_admin' not in session:
         return redirect(url_for('index'))
     
@@ -813,7 +2064,37 @@ def admin_user_details(user_id):
                                  dev_link=DEV_TELEGRAM_LINK, 
                                  dev_name=DEV_TELEGRAM)
 
-# ========== صفحات HTML (نفس المحتوى الأصلي) ==========
+def add_banned_student_code(code):
+    codes = load_banned_student_codes()
+    if code not in codes:
+        codes.append(code)
+        save_banned_student_codes(codes)
+        return True
+    return False
+
+def remove_banned_student_code(code):
+    codes = load_banned_student_codes()
+    if code in codes:
+        codes.remove(code)
+        save_banned_student_codes(codes)
+        return True
+    return False
+
+# ========== صفحات HTML ==========
+# (ملاحظة: سيتم تضمين صفحات HTML كاملة هنا كما في الكود الأصلي)
+# نظراً لأن صفحات HTML طويلة جداً، سأضعها مختصرة هنا
+# لكن يجب نسخها كاملة من ملف newe.py الأصلي
+
+LOGIN_PAGE = '''(نفس المحتوى الأصلي)'''
+RESULT_PAGE = '''(نفس المحتوى الأصلي)'''
+ADMIN_PAGE = '''(نفس المحتوى الأصلي)'''
+SETTINGS_PAGE = '''(نفس المحتوى الأصلي)'''
+USERS_PAGE = '''(نفس المحتوى الأصلي)'''
+BANNED_CODES_PAGE = '''(نفس المحتوى الأصلي)'''
+COOKIES_PAGE = '''(نفس المحتوى الأصلي)'''
+ACCESS_CODES_PAGE = '''(نفس المحتوى الأصلي)'''
+USER_DETAILS_PAGE = '''(نفس المحتوى الأصلي)'''
+# ========== صفحات HTML ==========
 LOGIN_PAGE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -821,9 +2102,7 @@ LOGIN_PAGE = '''
 <meta charset="UTF-8">
 <title>Minia University | Login</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&family=Cinzel:wght@500;700&display=swap" rel="stylesheet">
-
 <style>
 *{
     margin:0;
@@ -850,7 +2129,6 @@ body{
     padding:16px;
 }
 
-/* Card */
 .login-box{
     width:100%;
     max-width:420px;
@@ -862,7 +2140,6 @@ body{
     border:1px solid rgba(212,175,55,.25);
 }
 
-/* Logo */
 .logo{
     text-align:center;
     margin-bottom:26px;
@@ -885,7 +2162,6 @@ body{
     color:#cfd9ff;
 }
 
-/* Inputs */
 .input-group{
     margin-bottom:18px;
 }
@@ -917,7 +2193,6 @@ body{
     box-shadow:0 0 0 2px rgba(212,175,55,.3);
 }
 
-/* Button */
 .login-btn{
     width:100%;
     padding:15px;
@@ -936,7 +2211,6 @@ body{
     box-shadow:0 12px 35px rgba(212,175,55,.4);
 }
 
-/* Error */
 .error{
     background:rgba(220,38,38,.25);
     color:#ffdcdc;
@@ -947,7 +2221,6 @@ body{
     font-size:14px;
 }
 
-/* Footer */
 .footer{
     text-align:center;
     margin-top:22px;
@@ -963,14 +2236,12 @@ body{
     text-decoration:underline;
 }
 
-/* Extra small phones */
 @media(max-width:360px){
     .login-box{
         padding:22px;
     }
 }
 
-/* Large screens */
 @media(min-width:1200px){
     .login-box{
         max-width:460px;
@@ -980,13 +2251,11 @@ body{
 </head>
 
 <body>
-
 <div class="login-box">
-
     <div class="logo">
         <img src="https://www.minia.edu.eg/minia/images/newlogo2026.png">
         <h1>Minia University</h1>
-        <p>Academic Systems Portal</p>
+        <p>Ibn Al-Haytham Credit Hour System</p>
     </div>
 
     {% if error %}
@@ -1010,9 +2279,7 @@ body{
     <div class="footer">
         <a href="{{ dev_link }}" target="_blank">{{ dev_name }}</a>
     </div>
-
 </div>
-
 </body>
 </html>
 '''
@@ -1023,10 +2290,8 @@ RESULT_PAGE = '''
 <head>
 <meta charset="UTF-8">
 <title>النتيجة | جامعة المنيا</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&family=Cinzel:wght@500;700&display=swap" rel="stylesheet">
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&family=Cinzel:wght@500;700&family=Tajawal:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
 *{
     margin:0;
@@ -1036,149 +2301,156 @@ RESULT_PAGE = '''
 
 html,body{
     width:100%;
-    height:100%;
-    overflow-x:hidden;
-}
-
-body{
-    display:flex;
-    align-items:center;
-    justify-content:center;
     background:
-        linear-gradient(rgba(7,22,48,.82), rgba(7,22,48,.82)),
+        linear-gradient(rgba(7,22,48,.95), rgba(7,22,48,.95)),
         url('https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTD-YOcG5h8n4ORykqy3vEllQBl9EVVVm_Y5a4nNoh00BD3l9J1Utdwp_Q&s=10');
     background-size:cover;
     background-position:center;
-    font-family:'Poppins',sans-serif;
-    padding:16px;
+    background-attachment: fixed;
+    font-family:'Tajawal', 'Poppins', sans-serif;
+    padding:8px;
+    min-height:100vh;
 }
 
-/* Card */
+.container{
+    max-width:1200px;
+    margin:0 auto;
+    width:100%;
+}
+
 .result-box{
     width:100%;
-    max-width:850px;
-    background:rgba(255,255,255,.09);
-    backdrop-filter:blur(16px);
-    border-radius:22px;
-    padding:clamp(22px,4vw,40px);
-    box-shadow:0 35px 90px rgba(0,0,0,.6);
-    border:1px solid rgba(212,175,55,.25);
+    background:rgba(255,255,255,.08);
+    backdrop-filter:blur(15px);
+    border-radius:20px;
+    padding:15px;
+    box-shadow:0 20px 40px rgba(0,0,0,.5);
+    border:1px solid rgba(212,175,55,.3);
+    margin-bottom:15px;
 }
 
-/* Header */
 .header{
     text-align:center;
-    margin-bottom:28px;
+    margin-bottom:15px;
 }
 
 .header img{
-    width:clamp(65px,18vw,90px);
-    margin-bottom:10px;
+    width:55px;
+    margin-bottom:5px;
 }
 
 .header h2{
     font-family:'Cinzel',serif;
-    font-size:clamp(20px,5vw,26px);
+    font-size:18px;
     color:#d4af37;
     letter-spacing:1px;
 }
 
 .header p{
-    font-size:clamp(12px,3.5vw,14px);
+    font-size:12px;
     color:#cfd9ff;
 }
 
-/* Info table */
 .info{
-    background:rgba(255,255,255,.08);
-    border-radius:18px;
-    padding:clamp(18px,3vw,26px);
-    border:1px solid rgba(255,255,255,.15);
+    background:rgba(255,255,255,.05);
+    border-radius:15px;
+    padding:12px;
+    border:1px solid rgba(255,255,255,.1);
+    margin-bottom:15px;
 }
 
 .info-row{
     display:flex;
-    flex-wrap:wrap;
-    margin-bottom:14px;
-    padding-bottom:10px;
-    border-bottom:1px solid rgba(255,255,255,.15);
+    flex-direction:column;
+    margin-bottom:10px;
+    padding-bottom:8px;
+    border-bottom:1px solid rgba(255,255,255,.1);
+}
+
+.info-row:last-child{
+    border-bottom:none;
+    margin-bottom:0;
+    padding-bottom:0;
 }
 
 .info-label{
-    min-width:140px;
     color:#d4af37;
     font-weight:600;
+    font-size:13px;
+    margin-bottom:2px;
 }
 
 .info-value{
     color:#fff;
-    flex:1;
+    font-size:14px;
+    word-break:break-word;
+    line-height:1.4;
 }
 
-/* Stats */
 .stats{
     display:flex;
-    flex-wrap:wrap;
-    justify-content:center;
-    gap:16px;
-    margin:26px 0;
+    flex-direction:column;
+    gap:8px;
+    margin:15px 0;
 }
 
 .stat{
     background:linear-gradient(135deg,#d4af37,#1e3a8a);
     color:#fff;
-    padding:22px 28px;
-    border-radius:16px;
+    padding:12px;
+    border-radius:12px;
     text-align:center;
-    box-shadow:0 12px 35px rgba(212,175,55,.35);
-    font-size:18px;
+    box-shadow:0 5px 15px rgba(212,175,55,.3);
+    font-size:14px;
     display:flex;
     align-items:center;
-    gap:20px;
     justify-content:center;
+    gap:8px;
 }
 
 .stat .icon{
-    font-size:22px;
+    font-size:18px;
 }
 
-/* Button */
 .actions{
     text-align:center;
-    margin-top:22px;
+    margin-top:15px;
 }
 
 .btn{
     display:inline-block;
-    padding:14px 34px;
-    border-radius:14px;
+    padding:12px 25px;
+    border-radius:12px;
     background:linear-gradient(135deg,#d4af37,#1e3a8a);
     color:#fff;
     text-decoration:none;
     font-weight:600;
     transition:.3s;
+    margin:5px;
+    width:100%;
+    text-align:center;
+    font-size:14px;
 }
 
 .btn:hover{
     transform:translateY(-2px);
-    box-shadow:0 14px 35px rgba(212,175,55,.45);
+    box-shadow:0 8px 25px rgba(212,175,55,.4);
 }
 
-/* Error */
 .error{
-    background:rgba(220,38,38,.25);
+    background:rgba(220,38,38,.2);
     color:#ffdcdc;
-    padding:22px;
-    border-radius:16px;
+    padding:15px;
+    border-radius:12px;
     text-align:center;
-    font-size:16px;
+    font-size:14px;
+    margin:15px 0;
 }
 
-/* Footer */
 .footer{
     text-align:center;
-    margin-top:18px;
-    font-size:13px;
+    margin-top:15px;
+    font-size:12px;
 }
 
 .footer a{
@@ -1186,101 +2458,458 @@ body{
     text-decoration:none;
 }
 
-.footer a:hover{
-    text-decoration:underline;
+.student-info-card {
+    background: linear-gradient(135deg, rgba(212,175,55,0.1), rgba(30,58,138,0.1));
+    border-radius: 15px;
+    padding: 12px;
+    margin-bottom: 15px;
+    border: 1px solid rgba(212,175,55,0.3);
 }
 
-/* Small screens */
-@media(max-width:400px){
+.student-info-card .info-row {
+    display: flex;
+    flex-direction: column;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(212,175,55,0.15);
+}
+
+.student-info-card .info-label {
+    color: #d4af37;
+    font-weight: 600;
+    font-size: 12px;
+    margin-bottom: 2px;
+}
+
+.student-info-card .info-value {
+    color: #fff;
+    font-size: 13px;
+}
+
+.gpa-summary {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 15px 0;
+}
+
+.gpa-card {
+    flex: 1 1 calc(33.333% - 8px);
+    min-width: 100px;
+    padding: 10px;
+    border-radius: 12px;
+    text-align: center;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+}
+
+.gpa-card.total {
+    background: linear-gradient(135deg, #d4af37, #b8860b);
+}
+
+.gpa-card.hours {
+    background: linear-gradient(135deg, #1e3a8a, #152b5e);
+}
+
+.gpa-card.points {
+    background: linear-gradient(135deg, #2ecc71, #27ae60);
+}
+
+.gpa-label {
+    color: rgba(255,255,255,0.9);
+    font-size: 11px;
+    margin-bottom: 3px;
+    white-space: nowrap;
+}
+
+.gpa-value {
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.semester-card {
+    background: rgba(0,0,0,0.3);
+    border-radius: 15px;
+    padding: 12px;
+    margin-bottom: 15px;
+    border: 1px solid rgba(212,175,55,0.2);
+}
+
+.semester-header {
+    margin-bottom: 12px;
+}
+
+.semester-title {
+    color: #d4af37;
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 2px solid rgba(212,175,55,0.3);
+    text-align: center;
+}
+
+.semester-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    margin: 8px 0;
+    background: rgba(0,0,0,0.2);
+    padding: 8px;
+    border-radius: 10px;
+}
+
+.stat-badge {
+    background: rgba(212,175,55,0.1);
+    color: #cfd9ff;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    border: 1px solid rgba(212,175,55,0.15);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    text-align: center;
+}
+
+.stat-badge strong {
+    color: #d4af37;
+    font-size: 12px;
+    margin-right: 0;
+    display: block;
+}
+
+.table-responsive {
+    width: 100%;
+    margin: 10px 0;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.courses-table-detailed {
+    width: 100%;
+    border-collapse: collapse;
+    background: rgba(0,0,0,0.2);
+    border-radius: 10px;
+    font-size: 13px;
+    table-layout: fixed;
+}
+
+.courses-table-detailed th:nth-child(1) { width: 35%; }
+.courses-table-detailed th:nth-child(2) { width: 10%; }
+.courses-table-detailed th:nth-child(3) { width: 15%; }
+.courses-table-detailed th:nth-child(4) { width: 40%; }
+
+.courses-table-detailed th {
+    background: rgba(212,175,55,0.2);
+    color: #d4af37;
+    padding: 10px 5px;
+    font-weight: 600;
+    font-size: 13px;
+    text-align: center;
+    white-space: normal;
+    word-wrap: break-word;
+}
+
+.courses-table-detailed td {
+    padding: 10px 5px;
+    color: #fff;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    text-align: center;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.courses-table-detailed tr:last-child td {
+    border-bottom: none;
+}
+
+.courses-table-detailed tr:hover {
+    background: rgba(212,175,55,0.15);
+    cursor: pointer;
+}
+
+.course-name {
+    text-align: right;
+    font-weight: 500;
+}
+
+.course-name-container {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.course-name-text {
+    font-weight: 600;
+    color: #d4af37;
+    font-size: 12px;
+    line-height: 1.3;
+}
+
+.course-code {
+    font-size: 10px;
+    color: rgba(255,255,255,0.5);
+}
+
+.course-grade {
+    font-weight: bold;
+}
+
+.course-degree {
+    font-weight: 500;
+}
+
+.click-hint {
+    text-align: center;
+    margin: 10px 0 15px;
+    font-size: 12px;
+    color: rgba(212,175,55,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: rgba(212,175,55,0.1);
+    padding: 8px;
+    border-radius: 30px;
+}
+
+.click-hint span {
+    font-size: 13px;
+}
+
+.courses-table-detailed tr:hover::after {
+    content: "انقر لعرض التفاصيل الكاملة";
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.9);
+    color: #d4af37;
+    padding: 5px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    white-space: nowrap;
+    z-index: 1000;
+    margin-bottom: 5px;
+    border: 1px solid #d4af37;
+}
+
+@media(min-width:600px){
+    body {
+        padding: 15px;
+    }
+    
+    .result-box {
+        padding: 20px;
+    }
+    
+    .info-row{
+        flex-direction:row;
+        align-items:center;
+    }
+    
     .info-label{
-        min-width:100%;
-        margin-bottom:6px;
+        min-width:150px;
+        margin-bottom:0;
+        font-size:14px;
     }
+    
+    .info-value{
+        font-size:15px;
+    }
+    
+    .stats{
+        flex-direction:row;
+        justify-content:center;
+    }
+    
     .stat{
+        flex:1;
+        padding:15px;
         font-size:16px;
-        gap:12px;
-        padding:16px 20px;
     }
+    
+    .btn{
+        width:auto;
+        font-size:16px;
+    }
+    
+    .gpa-summary{
+        flex-direction:row;
+    }
+    
+    .gpa-card{
+        flex:1;
+    }
+    
+    .gpa-label {
+        font-size: 12px;
+    }
+    
+    .gpa-value {
+        font-size: 18px;
+    }
+    
+    .semester-stats{
+        grid-template-columns: repeat(3, 1fr);
+    }
+    
+    .stat-badge {
+        font-size: 12px;
+    }
+    
+    .stat-badge strong {
+        font-size: 14px;
+    }
+    
+    .courses-table-detailed {
+        font-size: 14px;
+    }
+    
+    .course-name-text {
+        font-size: 13px;
+    }
+}
+
+@media(min-width:900px){
+    .semester-stats {
+        grid-template-columns: repeat(6, 1fr);
+    }
+    
+    .courses-table-detailed th:nth-child(1) { width: 40%; }
+    .courses-table-detailed th:nth-child(2) { width: 10%; }
+    .courses-table-detailed th:nth-child(3) { width: 15%; }
+    .courses-table-detailed th:nth-child(4) { width: 35%; }
+    
+    .course-name-text {
+        font-size: 14px;
+    }
+}
+
+@media(max-width:400px){
+    .courses-table-detailed {
+        font-size: 11px;
+    }
+    
+    .courses-table-detailed th {
+        padding: 8px 3px;
+        font-size: 11px;
+    }
+    
+    .courses-table-detailed td {
+        padding: 8px 3px;
+    }
+    
+    .course-name-text {
+        font-size: 11px;
+    }
+    
+    .course-code {
+        font-size: 9px;
+    }
+    
+    .click-hint {
+        font-size: 11px;
+    }
+}
+
+.course-grade[style*="color: #2ecc71"] {
+    text-shadow: 0 0 5px rgba(46,204,113,0.3);
+}
+
+.course-grade[style*="color: #e74c3c"] {
+    text-shadow: 0 0 5px rgba(231,76,60,0.3);
+}
+
+.course-grade[style*="color: #f39c12"] {
+    text-shadow: 0 0 5px rgba(243,156,18,0.3);
 }
 </style>
 </head>
 
 <body>
-
-<div class="result-box">
-
-    <div class="header">
-    <img src="https://www.minia.edu.eg/minia/images/newlogo2026.png" alt="Minia University Logo">
-    <h2 style="font-family:'Cinzel', serif; color:#d4af37; font-size:clamp(22px,5vw,28px); letter-spacing:1px; margin-bottom:6px;">
-        Minia University
-    </h2>
-    <p style="font-family:'Poppins', sans-serif; color:#cfd9ff; font-size:clamp(14px,3vw,16px);">
-        Academic Results Portal
-    </p>
-</div>
-
-    {% if error %}
-        <div class="error">
-            ❌ {{ error }} <br><br>
-            <a href="/" class="btn">عودة</a>
+<div class="container">
+    <div class="result-box">
+        <div class="header">
+            <img src="https://www.minia.edu.eg/minia/images/newlogo2026.png" alt="Minia University Logo">
+            <h2>Minia University</h2>
+            <p>Ibn Al-Haytham Credit Hour System</p>
         </div>
 
-    {% elif data and data.data %}
-        {% set first = data.data[0] %}
-
-        <div class="info">
-            <div class="info-row">
-                <div class="info-label">👤 اسم الطالب</div>
-                <div class="info-value">{{ first.StuName or 'غير متوفر' }}</div>
+        {% if error %}
+            <div class="error">
+                ❌ {{ error }} <br><br>
+                <a href="/" class="btn">عودة للصفحة الرئيسية</a>
             </div>
 
-            <div class="info-row">
-                <div class="info-label">🆔 رقم الطالب</div>
-                <div class="info-value">{{ first.studentID or first.Code or 'غير متوفر' }}</div>
+        {% else %}
+            
+            {% if transcript_only %}
+                {% if transcript_html %}
+                    <div class="transcript-section">
+                        {{ transcript_html|safe }}
+                    </div>
+                {% else %}
+                    <div class="error">
+                        لا توجد بيانات سجل أكاديمي متاحة
+                    </div>
+                {% endif %}
+                
+            {% else %}
+                {% if grades_html %}
+                    {{ grades_html|safe }}
+                {% endif %}
+                
+                {% if show_transcript and transcript_html %}
+                    <div class="transcript-section">
+                        <h3 style="color:#d4af37; text-align:center; margin:15px 0; font-size:16px;">📋 السجل الأكاديمي التفصيلي</h3>
+                        
+                        <div class="click-hint">
+                            <span>👆 انقر على المادة لعرض التفاصيل الكاملة</span>
+                        </div>
+                        
+                        {{ transcript_html|safe }}
+                    </div>
+                {% endif %}
+            {% endif %}
+
+            <div class="actions">
+                <a href="/" class="btn">استعلام جديد</a>
             </div>
 
-            <div class="info-row">
-                <div class="info-label">🏫 الكلية</div>
-                <div class="info-value">{{ (first.faculty or 'غير متوفر').replace('|',' - ') }}</div>
-            </div>
+        {% endif %}
 
-            <div class="info-row">
-                <div class="info-label">🎓 المستوى</div>
-                <div class="info-value">{{ (first.lvl or 'غير متوفر').replace('|',' - ') }}</div>
-            </div>
-
-            <div class="info-row">
-                <div class="info-label">📚 البرنامج</div>
-                <div class="info-value">{{ (first.prog or 'غير متوفر').replace('|',' - ') }}</div>
-            </div>
+        <div class="footer">
+            <a href="{{ dev_link }}" target="_blank">{{ dev_name }}</a>
         </div>
-
-        <div class="stats">
-            <div class="stat">
-                <div class="icon"></div>
-                <span>المعدل التراكمي: {{ first.stuGPA or '0.00' }}</span>
-                <div class="icon"></div>
-                <span>الساعات المكتسبة: {{ first.stuEarnedHours or '0' }}</span>
-            </div>
-        </div>
-
-        <div class="actions">
-            <a href="/" class="btn">استعلام جديد</a>
-        </div>
-
-    {% else %}
-        <div class="error">
-            ❌ لا توجد بيانات متاحة <br><br>
-            <a href="/" class="btn">عودة</a>
-        </div>
-    {% endif %}
-
-    <div class="footer">
-        <a href="{{ dev_link }}" target="_blank">{{ dev_name }}</a>
     </div>
-
 </div>
 
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var tableRows = document.querySelectorAll('.courses-table-detailed tr');
+    
+    tableRows.forEach(function(row) {
+        if (row.querySelector('th')) return;
+        
+        row.addEventListener('touchstart', function() {
+            this.style.backgroundColor = 'rgba(212,175,55,0.2)';
+        });
+        
+        row.addEventListener('touchend', function() {
+            this.style.backgroundColor = '';
+        });
+        
+        row.addEventListener('touchcancel', function() {
+            this.style.backgroundColor = '';
+        });
+    });
+    
+    console.log('تم تحميل صفحة النتائج بنجاح');
+});
+</script>
 </body>
 </html>
 '''
@@ -1302,9 +2931,8 @@ ADMIN_PAGE = '''
             padding: 20px; 
             margin-bottom: 20px; 
             display: flex; 
-            justify-content: space-between; 
-            align-items: center;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            flex-direction: column;
+            gap: 15px;
         }
         .header h1 { color: #667eea; }
         .logout-btn { 
@@ -1313,18 +2941,17 @@ ADMIN_PAGE = '''
             padding: 8px 16px; 
             border-radius: 8px; 
             text-decoration: none;
-            transition: 0.3s;
+            align-self: flex-start;
         }
-        .logout-btn:hover { background: #c82333; }
         .menu-grid { 
             display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
-            gap: 20px; 
+            grid-template-columns: 1fr; 
+            gap: 15px; 
         }
         .menu-card { 
             background: white; 
             border-radius: 15px; 
-            padding: 30px; 
+            padding: 20px; 
             text-align: center; 
             text-decoration: none; 
             color: #333; 
@@ -1333,12 +2960,12 @@ ADMIN_PAGE = '''
             box-shadow: 0 5px 15px rgba(0,0,0,0.1);
         }
         .menu-card:hover { 
-            transform: translateY(-5px); 
-            box-shadow: 0 15px 30px rgba(102, 126, 234, 0.3);
+            transform: translateY(-3px); 
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
         }
-        .menu-icon { font-size: 48px; margin-bottom: 15px; }
-        .menu-card h3 { margin-bottom: 10px; color: #667eea; }
-        .menu-card p { color: #666; font-size: 14px; }
+        .menu-icon { font-size: 35px; margin-bottom: 8px; }
+        .menu-card h3 { margin-bottom: 5px; color: #667eea; }
+        .menu-card p { color: #666; font-size: 13px; }
         .dev-footer {
             text-align: center;
             margin-top: 20px;
@@ -1349,13 +2976,31 @@ ADMIN_PAGE = '''
             text-decoration: none;
             font-weight: bold;
         }
+        @media(min-width:600px){
+            .menu-grid{
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        @media(min-width:900px){
+            .menu-grid{
+                grid-template-columns: repeat(3, 1fr);
+            }
+            .header{
+                flex-direction:row;
+                justify-content:space-between;
+                align-items:center;
+            }
+            .logout-btn{
+                align-self:auto;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🔧 لوحة تحكم الأدمن</h1>
-            <a href="/logout" class="logout-btn">🚪 تسجيل خروج</a>
+            <a href="/logout" class="logout-btn">🚪 خروج</a>
         </div>
         
         <div class="menu-grid">
@@ -1379,8 +3024,8 @@ ADMIN_PAGE = '''
             
             <a href="/admin/cookies" class="menu-card">
                 <div class="menu-icon">🍪</div>
-                <h3>الكوكيز</h3>
-                <p>إضافة وإدارة الكوكيز</p>
+                <h3>الكوكيز والجلسات</h3>
+                <p>إدارة الكوكيز والجلسات التلقائية</p>
             </a>
             
             <a href="/admin/access_codes" class="menu-card">
@@ -1392,7 +3037,7 @@ ADMIN_PAGE = '''
             <a href="/admin/export_users" class="menu-card">
                 <div class="menu-icon">📥</div>
                 <h3>تصدير البيانات</h3>
-                <p>تصدير بيانات المستخدمين (JSON/CSV)</p>
+                <p>تصدير بيانات المستخدمين</p>
             </a>
             
             <a href="/" class="menu-card">
@@ -1427,8 +3072,8 @@ SETTINGS_PAGE = '''
             padding: 20px; 
             margin-bottom: 20px; 
             display: flex; 
-            justify-content: space-between; 
-            align-items: center;
+            flex-direction: column;
+            gap: 15px;
         }
         .header h1 { color: #667eea; }
         .back-btn { 
@@ -1437,23 +3082,25 @@ SETTINGS_PAGE = '''
             padding: 8px 16px; 
             border-radius: 8px; 
             text-decoration: none;
+            align-self: flex-start;
         }
         .card { 
             background: white; 
             border-radius: 15px; 
-            padding: 25px; 
+            padding: 20px; 
             box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
         }
         .setting-item { 
             display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
+            flex-direction: column;
+            gap: 10px;
             padding: 15px 0; 
             border-bottom: 1px solid #eee; 
         }
         .setting-item:last-child { border-bottom: none; }
-        .setting-info h3 { color: #333; margin-bottom: 5px; }
-        .setting-info p { color: #666; font-size: 14px; }
+        .setting-info h3 { color: #333; margin-bottom: 5px; font-size: 16px; }
+        .setting-info p { color: #666; font-size: 13px; }
         .toggle-switch { position: relative; width: 60px; height: 34px; }
         .toggle-switch input { opacity: 0; width: 0; height: 0; }
         .slider { 
@@ -1481,8 +3128,8 @@ SETTINGS_PAGE = '''
         input:checked + .slider { background-color: #667eea; }
         input:checked + .slider:before { transform: translateX(26px); }
         .number-input {
-            width: 80px;
-            padding: 8px;
+            width: 100%;
+            padding: 10px;
             border: 1px solid #ddd;
             border-radius: 5px;
             text-align: center;
@@ -1491,7 +3138,7 @@ SETTINGS_PAGE = '''
             background: #28a745; 
             color: white; 
             border: none; 
-            padding: 12px; 
+            padding: 14px; 
             border-radius: 8px; 
             font-size: 16px; 
             font-weight: bold; 
@@ -1500,6 +3147,67 @@ SETTINGS_PAGE = '''
             margin-top: 20px; 
         }
         .save-btn:hover { background: #218838; }
+        
+        .whitelist-section {
+            margin-top: 15px;
+        }
+        .btn-primary, .btn-danger, .btn-success {
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            margin: 2px;
+        }
+        .btn-primary { background: #667eea; }
+        .btn-success { background: #28a745; }
+        .btn-danger { background: #dc3545; }
+        
+        .file-input-group {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+            flex-wrap: wrap;
+        }
+        .file-input-group input[type="file"] {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            min-width: 200px;
+        }
+        .single-code-input {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+        }
+        .single-code-input input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            min-width: 200px;
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-top: 15px;
+            font-size: 13px;
+        }
+        th { 
+            background: #667eea; 
+            color: white; 
+            padding: 8px; 
+        }
+        td { 
+            padding: 6px; 
+            border-bottom: 1px solid #dee2e6; 
+            text-align: center; 
+        }
+        tr:hover { background-color: #f5f5f5; }
+        
         .dev-footer {
             text-align: center;
             margin-top: 20px;
@@ -1509,6 +3217,33 @@ SETTINGS_PAGE = '''
             color: white;
             text-decoration: none;
             font-weight: bold;
+        }
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 13px;
+        }
+        
+        @media(min-width:600px){
+            .setting-item{
+                flex-direction:row;
+                align-items:center;
+                justify-content:space-between;
+            }
+            .number-input{
+                width:80px;
+            }
+            .header{
+                flex-direction:row;
+                justify-content:space-between;
+                align-items:center;
+            }
+            .back-btn{
+                align-self:auto;
+            }
         }
     </style>
 </head>
@@ -1524,7 +3259,7 @@ SETTINGS_PAGE = '''
                 <div class="setting-item">
                     <div class="setting-info">
                         <h3>كود واحد لكل مستخدم</h3>
-                        <p>منع المستخدمين من استخدام أكثر من كود طالب</p>
+                        <p>منع المستخدمين من استخدام أكثر من كود طالب (مع التحقق من IP)</p>
                     </div>
                     <label class="toggle-switch">
                         <input type="checkbox" name="single_code" {% if settings.single_code_per_user %}checked{% endif %}>
@@ -1567,6 +3302,28 @@ SETTINGS_PAGE = '''
                 
                 <div class="setting-item">
                     <div class="setting-info">
+                        <h3>عرض السجل الأكاديمي</h3>
+                        <p>إظهار الدرجات التفصيلية للمواد</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" name="show_transcript" {% if settings.show_transcript %}checked{% endif %}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <h3>السجل الأكاديمي فقط</h3>
+                        <p>عرض السجل الأكاديمي فقط دون الدرجات الأساسية</p>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" name="transcript_only" {% if settings.transcript_only %}checked{% endif %}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                
+                <div class="setting-item">
+                    <div class="setting-info">
                         <h3>الحد الأقصى لاستخدام الكوكيز</h3>
                         <p>عدد مرات استخدام كل كوكيز قبل إيقافها</p>
                     </div>
@@ -1577,10 +3334,92 @@ SETTINGS_PAGE = '''
             </form>
         </div>
         
+        <div class="card">
+            <h2 style="color: #667eea; margin-bottom: 15px;">🔒 قائمة الطلاب المسموح لهم</h2>
+            
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>تفعيل وضع القائمة البيضاء</h3>
+                    <p>عند التفعيل، سيتمكن فقط الطلاب المدرجين في القائمة من استخدام النظام</p>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="whitelist_mode" {% if whitelist_mode.enabled %}checked{% endif %} onchange="toggleWhitelistMode(this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            
+            <div class="whitelist-section" id="whitelistSection" style="{% if not whitelist_mode.enabled %}display: none;{% endif %}">
+                <div class="alert-info">
+                    📁 يمكنك رفع ملف txt يحتوي على أرقام الطلاب (كل رقم في سطر منفصل)
+                </div>
+                
+                <form method="POST" action="/admin/upload_student_whitelist" enctype="multipart/form-data" class="file-input-group">
+                    <input type="file" name="whitelist_file" accept=".txt" required>
+                    <button type="submit" class="btn-success">📤 رفع الملف</button>
+                </form>
+                
+                <div style="text-align: center; margin: 10px 0; color: #666;">أو</div>
+                
+                <form method="POST" action="/admin/add_student_to_whitelist" class="single-code-input">
+                    <input type="text" name="student_code" placeholder="أدخل كود الطالب" required pattern="[0-9]+" title="أرقام فقط">
+                    <button type="submit" class="btn-primary">➕ إضافة كود</button>
+                </form>
+                
+                <h3 style="margin: 15px 0 10px;">📋 الطلاب المسموح لهم ({{ student_whitelist|length }})</h3>
+                
+                {% if student_whitelist %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>كود الطالب</th>
+                            <th>إجراء</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for code in student_whitelist|sort %}
+                        <tr>
+                            <td>{{ code }}</td>
+                            <td>
+                                <form method="POST" action="/admin/remove_student_from_whitelist" style="display:inline;">
+                                    <input type="hidden" name="student_code" value="{{ code }}">
+                                    <button type="submit" class="btn-danger" onclick="return confirm('هل أنت متأكد من حذف هذا الكود؟')">❌ حذف</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p style="text-align: center; color: #666; padding: 20px;">لا يوجد طلاب في القائمة البيضاء</p>
+                {% endif %}
+                
+                <div style="text-align: center; margin-top: 15px;">
+                    <a href="/admin/download_student_whitelist" class="btn-primary" style="text-decoration: none;">📥 تحميل الملف الحالي</a>
+                </div>
+            </div>
+        </div>
+        
         <div class="dev-footer">
             <a href="{{ dev_link }}" target="_blank">👨‍💻 {{ dev_name }}</a>
         </div>
     </div>
+    
+    <script>
+    function toggleWhitelistMode(enabled) {
+        var section = document.getElementById('whitelistSection');
+        if (section) {
+            section.style.display = enabled ? 'block' : 'none';
+        }
+        
+        fetch('/admin/toggle_whitelist_mode', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({enabled: enabled})
+        });
+    }
+    </script>
 </body>
 </html>
 '''
@@ -1602,90 +3441,74 @@ USERS_PAGE = '''
             padding: 20px; 
             margin-bottom: 20px; 
             display: flex; 
-            justify-content: space-between; 
-            align-items: center;
+            flex-direction: column;
+            gap: 15px;
         }
         .header h1 { color: #667eea; }
         .header-buttons {
             display: flex;
             gap: 10px;
+            flex-wrap: wrap;
         }
-        .back-btn { 
-            background: #6c757d; 
-            color: white; 
+        .back-btn, .export-btn { 
             padding: 8px 16px; 
             border-radius: 8px; 
             text-decoration: none;
-        }
-        .export-btn {
-            background: #28a745;
             color: white;
-            padding: 8px 16px;
-            border-radius: 8px;
-            text-decoration: none;
+            text-align: center;
+            display: inline-block;
         }
+        .back-btn { background: #6c757d; }
+        .export-btn { background: #28a745; }
         .card { 
             background: white; 
             border-radius: 15px; 
             padding: 20px; 
             margin-bottom: 20px;
             box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            overflow-x: auto;
         }
-        .card h2 { color: #667eea; margin-bottom: 15px; }
+        .card h2 { color: #667eea; margin-bottom: 15px; font-size: 18px; }
         table { 
             width: 100%; 
             border-collapse: collapse; 
-            font-size: 14px;
+            font-size: 12px;
+            min-width: 500px;
         }
         th { 
             background: #667eea; 
             color: white; 
-            padding: 12px; 
-            text-align: center; 
+            padding: 8px; 
         }
         td { 
-            padding: 10px; 
+            padding: 6px; 
             border-bottom: 1px solid #dee2e6; 
             text-align: center; 
         }
         tr:hover { background-color: #f5f5f5; }
-        .btn-success { 
-            background: #28a745; 
+        .btn-success, .btn-danger, .btn-info { 
             color: white; 
             border: none; 
-            padding: 5px 10px; 
+            padding: 4px 6px; 
             border-radius: 3px; 
             cursor: pointer; 
             text-decoration: none;
-            font-size: 12px;
+            font-size: 11px;
+            display: inline-block;
+            margin: 2px;
         }
-        .btn-danger { 
-            background: #dc3545; 
-            color: white; 
-            border: none; 
-            padding: 5px 10px; 
-            border-radius: 3px; 
-            cursor: pointer; 
-            text-decoration: none;
-            font-size: 12px;
-        }
-        .btn-info { 
-            background: #17a2b8; 
-            color: white; 
-            border: none; 
-            padding: 5px 10px; 
-            border-radius: 3px; 
-            cursor: pointer; 
-            text-decoration: none;
-            font-size: 12px;
-        }
+        .btn-success { background: #28a745; }
+        .btn-danger { background: #dc3545; }
+        .btn-info { background: #17a2b8; }
         .input-group { 
             display: flex; 
             gap: 10px; 
             margin-bottom: 20px; 
+            flex-wrap: wrap;
         }
         .input-group input { 
             flex: 1; 
+            min-width: 200px;
             padding: 10px; 
             border: 1px solid #ddd; 
             border-radius: 5px; 
@@ -1707,11 +3530,6 @@ USERS_PAGE = '''
             border: 1px solid #ddd;
             border-radius: 5px;
         }
-        .export-buttons {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
         .dev-footer {
             text-align: center;
             margin-top: 20px;
@@ -1722,6 +3540,20 @@ USERS_PAGE = '''
             text-decoration: none;
             font-weight: bold;
         }
+        @media(min-width:600px){
+            .header{
+                flex-direction:row;
+                justify-content:space-between;
+                align-items:center;
+            }
+            table{
+                font-size:14px;
+            }
+            .btn-success, .btn-danger, .btn-info{
+                padding:5px 8px;
+                font-size:12px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1730,7 +3562,6 @@ USERS_PAGE = '''
             <h1>👥 إدارة المستخدمين</h1>
             <div class="header-buttons">
                 <a href="/admin/export_users" class="export-btn" target="_blank">📥 تصدير JSON</a>
-                <a href="/admin/export_users_csv" class="export-btn" target="_blank">📥 تصدير CSV</a>
                 <a href="/admin" class="back-btn">رجوع</a>
             </div>
         </div>
@@ -1788,12 +3619,12 @@ USERS_PAGE = '''
         </div>
         
         <div class="card">
-            <h2>📊 المستخدمين المسجلين (مع كلمات المرور وعناوين IP)</h2>
+            <h2>📊 المستخدمين المسجلين</h2>
             
-            <input type="text" id="searchInput" class="search-box" placeholder="🔍 بحث في المستخدمين (بالكود، الباسورد، أو IP)..." onkeyup="searchTable()">
+            <input type="text" id="searchInput" class="search-box" placeholder="🔍 بحث في المستخدمين..." onkeyup="searchTable()">
             
-            <div class="export-buttons">
-                <span style="color: #667eea;">إجمالي المستخدمين: {{ student_codes|length }}</span>
+            <div style="margin-bottom: 10px; color: #667eea;">
+                إجمالي المستخدمين: {{ student_codes|length }}
             </div>
             
             <table id="usersTable">
@@ -1813,11 +3644,11 @@ USERS_PAGE = '''
                     <tr>
                         <td>{{ user }}</td>
                         <td>{{ data.student_code if data.student_code else '—' }}</td>
-                        <td><span class="password-mask">●●●●●●</span> {{ data.password[:4] if data.password else '' }}...</td>
+                        <td><span class="password-mask">●●●●●●</span></td>
                         <td class="ip-address">{{ data.last_ip if data.last_ip else '—' }}</td>
                         <td>{{ data.last_seen[:16] if data.last_seen else '—' }}</td>
                         <td>
-                            <a href="/admin/user_details/{{ user }}" class="btn-info" target="_blank">عرض التفاصيل</a>
+                            <a href="/admin/user_details/{{ user }}" class="btn-info" target="_blank">عرض</a>
                         </td>
                     </tr>
                     {% endif %}
@@ -1875,8 +3706,8 @@ BANNED_CODES_PAGE = '''
             padding: 20px; 
             margin-bottom: 20px; 
             display: flex; 
-            justify-content: space-between; 
-            align-items: center;
+            flex-direction: column;
+            gap: 15px;
         }
         .header h1 { color: #667eea; }
         .back-btn { 
@@ -1885,6 +3716,7 @@ BANNED_CODES_PAGE = '''
             padding: 8px 16px; 
             border-radius: 8px; 
             text-decoration: none;
+            align-self: flex-start;
         }
         .card { 
             background: white; 
@@ -1898,29 +3730,24 @@ BANNED_CODES_PAGE = '''
             display: flex; 
             gap: 10px; 
             margin-bottom: 20px; 
+            flex-wrap: wrap;
         }
         .input-group input { 
             flex: 1; 
+            min-width: 200px;
             padding: 10px; 
             border: 1px solid #ddd; 
             border-radius: 5px; 
         }
-        .btn-danger { 
-            background: #dc3545; 
+        .btn-danger, .btn-success { 
             color: white; 
             border: none; 
             padding: 10px 20px; 
             border-radius: 5px; 
             cursor: pointer; 
         }
-        .btn-success { 
-            background: #28a745; 
-            color: white; 
-            border: none; 
-            padding: 10px 20px; 
-            border-radius: 5px; 
-            cursor: pointer; 
-        }
+        .btn-danger { background: #dc3545; }
+        .btn-success { background: #28a745; }
         table { 
             width: 100%; 
             border-collapse: collapse; 
@@ -1928,10 +3755,10 @@ BANNED_CODES_PAGE = '''
         th { 
             background: #667eea; 
             color: white; 
-            padding: 12px; 
+            padding: 10px; 
         }
         td { 
-            padding: 10px; 
+            padding: 8px; 
             border-bottom: 1px solid #dee2e6; 
             text-align: center; 
         }
@@ -1944,6 +3771,16 @@ BANNED_CODES_PAGE = '''
             color: white;
             text-decoration: none;
             font-weight: bold;
+        }
+        @media(min-width:600px){
+            .header{
+                flex-direction:row;
+                justify-content:space-between;
+                align-items:center;
+            }
+            .back-btn{
+                align-self:auto;
+            }
         }
     </style>
 </head>
@@ -2003,7 +3840,7 @@ COOKIES_PAGE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>إدارة الكوكيز - جامعة المنيا</title>
+    <title>إدارة الكوكيز والجلسات - جامعة المنيا</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 15px; }
@@ -2014,8 +3851,8 @@ COOKIES_PAGE = '''
             padding: 20px; 
             margin-bottom: 20px; 
             display: flex; 
-            justify-content: space-between; 
-            align-items: center;
+            flex-direction: column;
+            gap: 15px;
         }
         .header h1 { color: #667eea; }
         .back-btn { 
@@ -2024,6 +3861,7 @@ COOKIES_PAGE = '''
             padding: 8px 16px; 
             border-radius: 8px; 
             text-decoration: none;
+            align-self: flex-start;
         }
         .card { 
             background: white; 
@@ -2031,6 +3869,7 @@ COOKIES_PAGE = '''
             padding: 20px; 
             margin-bottom: 20px;
             box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            overflow-x: auto;
         }
         .card h2 { color: #667eea; margin-bottom: 15px; }
         .input-group { 
@@ -2049,75 +3888,119 @@ COOKIES_PAGE = '''
             min-height: 80px;
             resize: vertical;
         }
-        .btn-primary { 
-            background: #667eea; 
+        .btn-primary, .btn-success, .btn-danger, .btn-warning, .btn-info { 
             color: white; 
             border: none; 
-            padding: 10px 20px; 
+            padding: 8px 12px; 
             border-radius: 5px; 
             cursor: pointer; 
-            width: fit-content;
-        }
-        .btn-success { 
-            background: #28a745; 
-            color: white; 
-            border: none; 
-            padding: 5px 10px; 
-            border-radius: 3px; 
-            cursor: pointer; 
             font-size: 12px;
+            margin: 2px;
         }
-        .btn-danger { 
-            background: #dc3545; 
-            color: white; 
-            border: none; 
-            padding: 5px 10px; 
-            border-radius: 3px; 
-            cursor: pointer; 
-            font-size: 12px;
-        }
-        .btn-warning { 
-            background: #ffc107; 
-            color: #333; 
-            border: none; 
-            padding: 5px 10px; 
-            border-radius: 3px; 
-            cursor: pointer; 
-            font-size: 12px;
-        }
-        .btn-info { 
-            background: #17a2b8; 
-            color: white; 
-            border: none; 
-            padding: 5px 10px; 
-            border-radius: 3px; 
-            cursor: pointer; 
-            font-size: 12px;
-        }
+        .btn-primary { background: #667eea; }
+        .btn-success { background: #28a745; }
+        .btn-danger { background: #dc3545; }
+        .btn-warning { background: #ffc107; color: #333; }
+        .btn-info { background: #17a2b8; }
         table { 
             width: 100%; 
             border-collapse: collapse; 
-            font-size: 13px;
+            font-size: 12px;
+            min-width: 600px;
         }
         th { 
             background: #667eea; 
             color: white; 
-            padding: 10px; 
+            padding: 8px; 
         }
         td { 
-            padding: 8px; 
+            padding: 6px; 
             border-bottom: 1px solid #dee2e6; 
             text-align: center; 
         }
         .active { color: #28a745; font-weight: bold; }
         .inactive { color: #dc3545; font-weight: bold; }
-        .valid { color: #28a745; }
-        .invalid { color: #dc3545; }
         .cookie-value {
-            max-width: 200px;
+            max-width: 150px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+        .session-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .auto-login-control {
+            background: #e8f4fd;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .auto-login-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .auto-login-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #1e3a8a;
+        }
+        .auto-login-status {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .status-enabled {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status-disabled {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .auto-login-toggle {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .toggle-btn {
+            padding: 10px 25px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .toggle-btn.on {
+            background: #28a745;
+            color: white;
+        }
+        .toggle-btn.on:hover {
+            background: #218838;
+        }
+        .toggle-btn.off {
+            background: #dc3545;
+            color: white;
+        }
+        .toggle-btn.off:hover {
+            background: #c82333;
+        }
+        .auto-login-info {
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #333;
         }
         .dev-footer {
             text-align: center;
@@ -2129,21 +4012,101 @@ COOKIES_PAGE = '''
             text-decoration: none;
             font-weight: bold;
         }
+        @media(min-width:600px){
+            .header{
+                flex-direction:row;
+                justify-content:space-between;
+                align-items:center;
+            }
+            .back-btn{
+                align-self:auto;
+            }
+            .input-group{
+                flex-direction:row;
+                align-items:center;
+            }
+            .btn-primary{
+                width:auto;
+            }
+            .auto-login-header {
+                flex-direction: row;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🍪 إدارة الكوكيز</h1>
+            <h1>🍪 إدارة الكوكيز والجلسات</h1>
             <a href="/admin" class="back-btn">رجوع</a>
+        </div>
+        
+        <div class="auto-login-control">
+            <div class="auto-login-header">
+                <div>
+                    <span class="auto-login-title">🤖 التسجيل التلقائي للجلسات</span>
+                    <span class="auto-login-status {% if auto_login_settings.enabled %}status-enabled{% else %}status-disabled{% endif %}">
+                        {% if auto_login_settings.enabled %}🟢 مفعل{% else %}🔴 معطل{% endif %}
+                    </span>
+                </div>
+                <div class="auto-login-toggle">
+                    {% if auto_login_settings.enabled %}
+                        <button class="toggle-btn off" onclick="toggleAutoLogin(false)">⏸️ إيقاف</button>
+                    {% else %}
+                        <button class="toggle-btn on" onclick="toggleAutoLogin(true)">▶️ تشغيل</button>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="auto-login-info">
+                <div>🔄 يتم التحديث كل {{ auto_login_settings.refresh_interval }} دقيقة</div>
+                {% if auto_login_settings.last_run %}
+                <div>🕐 آخر تشغيل: {{ auto_login_settings.last_run[:16] }}</div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>🤖 الجلسات التلقائية</h2>
+            <div class="session-info">
+                <form method="POST" action="/admin/sessions" style="display: inline;">
+                    <input type="hidden" name="action" value="refresh_now">
+                    <button type="submit" class="btn-primary" {% if not auto_login_settings.enabled %}disabled style="opacity:0.5"{% endif %}>🔄 تحديث جميع الجلسات الآن</button>
+                </form>
+                {% if not auto_login_settings.enabled %}
+                <small style="color:#666; display:block; margin-top:5px;">⚠️ يجب تشغيل التسجيل التلقائي لتحديث الجلسات</small>
+                {% endif %}
+            </div>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>الحساب</th>
+                        <th>آخر تحديث</th>
+                        <th>عدد الاستخدامات</th>
+                        <th>الحالة</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for session in sessions %}
+                    <tr>
+                        <td>{{ session.username }}</td>
+                        <td>{{ session.last_refresh[:16] if session.last_refresh else '—' }}</td>
+                        <td>{{ session.usage_count }}</td>
+                        <td class="{{ 'active' if session.active else 'inactive' }}">
+                            {{ 'نشط' if session.active else 'غير نشط' }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
         
         <div class="card">
             <h2>➕ إضافة كوكيز جديدة</h2>
             <form method="POST" class="input-group">
                 <input type="hidden" name="action" value="add">
-                <textarea name="cookie_value" placeholder="أدخل قيمة الكوكيز كاملة مثال: userID=12345; أخرى=value" required></textarea>
-                <input type="text" name="description" placeholder="وصف (اختياري)">
+                <textarea name="cookie_value" placeholder="userID=xxx;sessionDateTime=yyy" required></textarea>
+                <input type="text" name="description" placeholder="وصف">
                 <button type="submit" class="btn-primary">إضافة</button>
             </form>
         </div>
@@ -2155,11 +4118,9 @@ COOKIES_PAGE = '''
                     <tr>
                         <th>الوصف</th>
                         <th>userID</th>
-                        <th>القيمة (مختصرة)</th>
+                        <th>القيمة</th>
                         <th>الحالة</th>
-                        <th>الصحة</th>
                         <th>الاستخدام</th>
-                        <th>الأخطاء</th>
                         <th>الإجراءات</th>
                     </tr>
                 </thead>
@@ -2167,31 +4128,17 @@ COOKIES_PAGE = '''
                     {% for id, data in cookies.items() %}
                     <tr>
                         <td>{{ data.description or '—' }}</td>
-                        <td><small>{{ data.user_id or '—' }}</small></td>
-                        <td class="cookie-value" title="{{ data.value }}">{{ data.value[:30] }}...</td>
+                        <td>{{ data.user_id or '—' }}</td>
+                        <td class="cookie-value" title="{{ data.value }}">{{ data.value[:20] }}...</td>
                         <td class="{{ 'active' if data.is_active else 'inactive' }}">
                             {{ 'نشط' if data.is_active else 'غير نشط' }}
                         </td>
-                        <td class="{{ 'valid' if data.is_valid else 'invalid' }}">
-                            {{ 'صالح' if data.is_valid else 'غير صالح' }}
-                        </td>
                         <td>{{ data.usage_count or 0 }}</td>
-                        <td>{{ data.error_count or 0 }}</td>
                         <td>
                             <form method="POST" style="display:inline;">
                                 <input type="hidden" name="action" value="toggle">
                                 <input type="hidden" name="cookie_id" value="{{ id }}">
-                                <button type="submit" class="btn-warning">تفعيل/تعطيل</button>
-                            </form>
-                            <form method="POST" style="display:inline;">
-                                <input type="hidden" name="action" value="validate">
-                                <input type="hidden" name="cookie_id" value="{{ id }}">
-                                <button type="submit" class="btn-info">تحقق</button>
-                            </form>
-                            <form method="POST" style="display:inline;">
-                                <input type="hidden" name="action" value="reset_errors">
-                                <input type="hidden" name="cookie_id" value="{{ id }}">
-                                <button type="submit" class="btn-success">إعادة تعيين</button>
+                                <button type="submit" class="btn-warning">تبديل</button>
                             </form>
                             <form method="POST" style="display:inline;">
                                 <input type="hidden" name="action" value="delete">
@@ -2209,6 +4156,25 @@ COOKIES_PAGE = '''
             <a href="{{ dev_link }}" target="_blank">👨‍💻 {{ dev_name }}</a>
         </div>
     </div>
+    
+    <script>
+    function toggleAutoLogin(enabled) {
+        fetch('/admin/toggle_auto_login', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({enabled: enabled})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if(data.success) {
+                alert(data.message);
+                location.reload();
+            }
+        });
+    }
+    </script>
 </body>
 </html>
 '''
@@ -2230,8 +4196,8 @@ ACCESS_CODES_PAGE = '''
             padding: 20px; 
             margin-bottom: 20px; 
             display: flex; 
-            justify-content: space-between; 
-            align-items: center;
+            flex-direction: column;
+            gap: 15px;
         }
         .header h1 { color: #667eea; }
         .back-btn { 
@@ -2240,6 +4206,7 @@ ACCESS_CODES_PAGE = '''
             padding: 8px 16px; 
             border-radius: 8px; 
             text-decoration: none;
+            align-self: flex-start;
         }
         .card { 
             background: white; 
@@ -2247,24 +4214,22 @@ ACCESS_CODES_PAGE = '''
             padding: 20px; 
             margin-bottom: 20px;
             box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            overflow-x: auto;
         }
         .card h2 { color: #667eea; margin-bottom: 15px; }
         .input-group { 
             display: flex; 
             gap: 10px; 
             margin-bottom: 20px; 
+            flex-wrap: wrap;
         }
-        .input-group input { 
-            flex: 1; 
+        .input-group input, .input-group select { 
             padding: 10px; 
             border: 1px solid #ddd; 
             border-radius: 5px; 
         }
-        .input-group select { 
-            padding: 10px; 
-            border: 1px solid #ddd; 
-            border-radius: 5px; 
-        }
+        .input-group input { flex: 2; min-width: 200px; }
+        .input-group select { flex: 1; min-width: 120px; }
         .btn-primary { 
             background: #667eea; 
             color: white; 
@@ -2273,10 +4238,10 @@ ACCESS_CODES_PAGE = '''
             border-radius: 5px; 
             cursor: pointer; 
         }
-        .btn-primary:hover { background: #764ba2; }
         table { 
             width: 100%; 
             border-collapse: collapse; 
+            min-width: 500px;
         }
         th { 
             background: #667eea; 
@@ -2284,7 +4249,7 @@ ACCESS_CODES_PAGE = '''
             padding: 10px; 
         }
         td { 
-            padding: 10px; 
+            padding: 8px; 
             border-bottom: 1px solid #dee2e6; 
             text-align: center; 
         }
@@ -2299,6 +4264,16 @@ ACCESS_CODES_PAGE = '''
             color: white;
             text-decoration: none;
             font-weight: bold;
+        }
+        @media(min-width:600px){
+            .header{
+                flex-direction:row;
+                justify-content:space-between;
+                align-items:center;
+            }
+            .back-btn{
+                align-self:auto;
+            }
         }
     </style>
 </head>
@@ -2331,7 +4306,6 @@ ACCESS_CODES_PAGE = '''
                         <th>الحالة</th>
                         <th>تاريخ الإنشاء</th>
                         <th>المستخدم</th>
-                        <th>IP المستخدم</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -2344,7 +4318,6 @@ ACCESS_CODES_PAGE = '''
                         </td>
                         <td>{{ data.created_at[:10] if data.created_at else '—' }}</td>
                         <td>{{ data.used_by if data.used_by else '—' }}</td>
-                        <td>{{ data.used_ip if data.used_ip else '—' }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -2376,36 +4349,38 @@ USER_DETAILS_PAGE = '''
             padding: 20px; 
             margin-bottom: 20px; 
             display: flex; 
-            justify-content: space-between; 
-            align-items: center;
+            flex-direction: column;
+            gap: 15px;
         }
-        .header h1 { color: #667eea; }
+        .header h1 { color: #667eea; word-break: break-word; font-size: 20px; }
         .back-btn { 
             background: #6c757d; 
             color: white; 
             padding: 8px 16px; 
             border-radius: 8px; 
             text-decoration: none;
+            align-self: flex-start;
         }
         .card { 
             background: white; 
             border-radius: 15px; 
-            padding: 30px; 
+            padding: 20px; 
             box-shadow: 0 5px 15px rgba(0,0,0,0.1);
         }
         .info-row {
             display: flex;
-            padding: 15px 0;
+            flex-direction: column;
+            padding: 12px 0;
             border-bottom: 1px solid #eee;
         }
         .info-label {
-            width: 150px;
             font-weight: bold;
             color: #667eea;
+            margin-bottom: 5px;
         }
         .info-value {
-            flex: 1;
             color: #333;
+            word-break: break-word;
         }
         .password-value {
             font-family: monospace;
@@ -2433,6 +4408,23 @@ USER_DETAILS_PAGE = '''
             color: white;
             text-decoration: none;
             font-weight: bold;
+        }
+        @media(min-width:600px){
+            .header{
+                flex-direction:row;
+                justify-content:space-between;
+                align-items:center;
+            }
+            .back-btn{
+                align-self:auto;
+            }
+            .info-row{
+                flex-direction:row;
+            }
+            .info-label{
+                min-width:150px;
+                margin-bottom:0;
+            }
         }
     </style>
 </head>
@@ -2479,7 +4471,7 @@ USER_DETAILS_PAGE = '''
             <div class="info-row">
                 <div class="info-label">جميع عناوين IP:</div>
                 <div class="info-value">
-                    {% if user_data.ips and user_data.ips is iterable and user_data.ips is not string %}
+                    {% if user_data.ips and user_data.ips is iterable %}
                         <ul class="ip-list">
                         {% for ip in user_data.ips %}
                             <li>{{ ip }}</li>
@@ -2499,7 +4491,5 @@ USER_DETAILS_PAGE = '''
 </body>
 </html>
 '''
-
-# ========== نقطة الدخول لـ Vercel ==========
-# هذا هو المتغير الذي سيتعرف عليه Vercel
-app.debug = False
+# ========== هذا المتغير مطلوب لـ Vercel ==========
+# Vercel سيبحث عن متغير باسم 'app'
