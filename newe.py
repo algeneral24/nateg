@@ -27,6 +27,8 @@ DATA_URL = f"{BASE_URL}/getJCI"
 # ========== استخدام التخزين المؤقت في الذاكرة ==========
 # ملاحظة: هذا التخزين مؤقت وسيختفي عند إعادة تشغيل التطبيق على Vercel
 # يفضل استخدام قاعدة بيانات خارجية مثل MongoDB Atlas أو Supabase للتخزين الدائم
+# ========== دوال مساعدة للتخزين في الذاكرة ==========
+# ملاحظة: على Vercel، كل شيء في الذاكرة مؤقت
 MEMORY_STORAGE = {
     "student_codes": {},
     "banned_users": set(),
@@ -47,28 +49,14 @@ MEMORY_STORAGE = {
     "student_whitelist": set(),
     "whitelist_mode": {"enabled": False, "filename": "student_whitelist.txt"},
     "auto_login_settings": {
-        "enabled": False,  # معطل افتراضياً على Vercel
+        "enabled": False,
         "refresh_interval": 50,
         "last_run": None
     },
     "session_manager_sessions": {}
 }
 
-# ========== بيانات الأدمن والمطور ==========
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "admin123"
-DEV_TELEGRAM = "𓆩⋆ ׅᎯ𝔹Ꮇ ׅ⋆𓆪"
-DEV_TELEGRAM_LINK = "https://t.me/BO_R0"
-
-# ========== حساب الجلسات الدائمة ==========
-SESSION_ACCOUNTS = [
-    {
-        "username": "81691006",
-        "password": "iOUy651!",
-        "active": True
-    },
-]
-
+# تعريف أسماء الملفات (للت
 # ========== إعدادات التسجيل التلقائي ==========
 def load_auto_login_settings():
     """تحميل إعدادات التسجيل التلقائي"""
