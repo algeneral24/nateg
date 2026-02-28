@@ -6,9 +6,7 @@ import os
 from functools import wraps
 from datetime import datetime, timedelta
 import hashlib
-import csv
 import threading
-from io import StringIO
 import urllib.parse
 from pymongo import MongoClient
 from bson import ObjectId
@@ -42,7 +40,7 @@ banned_users_collection.create_index("user_id", unique=True)
 banned_student_codes_collection.create_index("code", unique=True)
 access_codes_collection.create_index("code", unique=True)
 cookies_collection.create_index("cookie_id", unique=True)
-cookies_collection.create_index("last_used")  # للحذف التلقائي
+cookies_collection.create_index("last_used")
 student_whitelist_collection.create_index("code", unique=True)
 
 # ========== إعدادات التطبيق ==========
@@ -66,7 +64,7 @@ DEV_TELEGRAM_LINK = "https://t.me/BO_R0"
 SESSION_ACCOUNTS = [
     {
         "username": "81691006",
-        "password": "iOi123456789!",
+        "password": "iOuY651!",
         "active": True
     },
 ]
@@ -110,13 +108,12 @@ def get_user_data(user_id):
     user_id_str = str(user_id)
     doc = student_codes_collection.find_one({"user_id": user_id_str})
     if doc:
-        # تحويل ObjectId إلى string
         doc.pop('_id', None)
         return doc
     return {}
 
-def set_user_data(user_id, student_code, password=None, ip_address=None):
-    """حفظ بيانات المستخدم"""
+def set_user_data(user_id, student_code, password=None):
+    """حفظ بيانات المستخدم (بدون IP)"""
     user_id_str = str(user_id)
     
     doc = student_codes_collection.find_one({"user_id": user_id_str})
@@ -125,22 +122,15 @@ def set_user_data(user_id, student_code, password=None, ip_address=None):
         doc = {
             "user_id": user_id_str,
             "student_code": student_code,
-            "ips": [],
             "updated_at": datetime.now().isoformat()
         }
     
     doc["student_code"] = student_code
     if password:
         doc["password"] = password
-    if ip_address:
-        if "ips" not in doc or not isinstance(doc["ips"], list):
-            doc["ips"] = []
-        if ip_address not in doc["ips"]:
-            doc["ips"].append(ip_address)
-        doc["last_ip"] = ip_address
-        doc["last_seen"] = datetime.now().isoformat()
     
     doc["updated_at"] = datetime.now().isoformat()
+    doc["last_seen"] = datetime.now().isoformat()
     
     student_codes_collection.update_one(
         {"user_id": user_id_str},
@@ -164,11 +154,7 @@ def load_settings():
         doc.pop('_id', None)
         return doc
     return {
-        "single_code_per_user": True,
-        "subscription_required": True,
         "maintenance_mode": False,
-        "cookie_rotation": True,
-        "max_cookie_uses": 50,
         "show_transcript": True,
         "transcript_only": False
     }
@@ -211,7 +197,7 @@ def save_banned_user(user_id):
             "banned_at": datetime.now().isoformat()
         })
     except:
-        pass  # موجود بالفعل
+        pass
 
 def load_banned_student_codes():
     """تحميل أكواد الطلاب المحظورة"""
@@ -242,42 +228,6 @@ def is_whitelisted(user_id):
     whitelist = load_whitelist()
     return str(user_id) in whitelist
 
-def check_and_ban_user(user_id, student_code, password=None, ip_address=None):
-    """التحقق من كود الطالب والباسورد مع الاعتماد على IP المخزن"""
-    
-    if is_whitelisted(str(user_id)):
-        return False, "whitelist_bypass"
-    
-    user_data = get_user_data(user_id)
-    saved_code = user_data.get("student_code")
-    saved_password = user_data.get("password")
-    saved_ips = user_data.get("ips", [])
-    
-    settings = load_settings()
-    
-    if not saved_code:
-        set_user_data(user_id, student_code, password, ip_address)
-        return False, "new_user"
-    
-    single_code_enabled = settings.get("single_code_per_user", True)
-    
-    if single_code_enabled:
-        if saved_ips and ip_address and ip_address not in saved_ips:
-            save_banned_user(user_id)
-            return True, "banned_different_ip"
-        
-        if saved_code != student_code:
-            save_banned_user(user_id)
-            return True, "banned_different_code"
-    
-    set_user_data(user_id, saved_code, None, ip_address)
-    
-    if password and saved_password != password:
-        set_user_data(user_id, student_code, password, ip_address)
-        return False, "password_updated"
-    
-    return False, "code_match"
-
 def load_access_codes():
     """تحميل أكواد الوصول"""
     codes_dict = {}
@@ -296,7 +246,7 @@ def save_access_codes(codes_dict):
         doc["code"] = code
         access_codes_collection.insert_one(doc)
 
-def mark_code_as_used(code, user_id, ip_address=None):
+def mark_code_as_used(code, user_id):
     """تحديد كود الوصول كمستخدم"""
     result = access_codes_collection.update_one(
         {"code": code},
@@ -304,7 +254,6 @@ def mark_code_as_used(code, user_id, ip_address=None):
             "$set": {
                 "used": True,
                 "used_by": user_id,
-                "used_ip": ip_address,
                 "used_at": datetime.now().isoformat()
             }
         }
@@ -538,7 +487,6 @@ class SessionManager:
         auto_settings["enabled"] = enabled
         save_auto_login_settings(auto_settings)
         
-        # إذا تم التشغيل، نقوم بتحديث الجلسات مرة واحدة
         if enabled:
             threading.Thread(target=self.refresh_all_sessions, daemon=True).start()
     
@@ -570,11 +518,10 @@ class SessionManager:
 
 session_manager = SessionManager()
 
-# تحميل إعدادات التسجيل التلقائي
 auto_settings = load_auto_login_settings()
 session_manager.set_auto_login_state(auto_settings.get("enabled", False))
 
-# ========== نظام الكوكيز المحسن ==========
+# ========== نظام الكوكيز ==========
 def load_cookies():
     """تحميل الكوكيز من MongoDB"""
     cookies_dict = {}
@@ -606,7 +553,6 @@ def add_cookie(cookie_value, description=""):
         "description": description,
         "added_at": datetime.now().isoformat(),
         "is_active": True,
-        "usage_count": 0,
         "last_used": None,
         "error_count": 0,
         "is_valid": True
@@ -631,19 +577,15 @@ def extract_user_id_from_cookie(cookie_string):
 def get_active_cookies():
     """الحصول على الكوكيز النشطة"""
     cookies = load_cookies()
-    settings = load_settings()
-    max_uses = settings.get("max_cookie_uses", 50)
     
     active = []
     for cid, data in cookies.items():
         if isinstance(data, dict) and data.get("is_active", True) and data.get("is_valid", True):
-            if data.get("usage_count", 0) < max_uses:
-                active.append({
-                    "id": cid, 
-                    "value": data["value"], 
-                    "description": data.get("description", ""),
-                    "usage_count": data.get("usage_count", 0)
-                })
+            active.append({
+                "id": cid, 
+                "value": data["value"], 
+                "description": data.get("description", "")
+            })
     return active
 
 def get_best_cookie():
@@ -656,8 +598,7 @@ def get_best_cookie():
     if not active:
         return None
     
-    best_cookie = min(active, key=lambda x: x['usage_count'])
-    return best_cookie['value']
+    return active[0]['value'] if active else None
 
 def get_cookie_for_request():
     """الحصول على أفضل كوكيز متاحة للاستخدام في الطلبات"""
@@ -669,7 +610,7 @@ def get_cookie_for_request():
     if not active:
         return None
     
-    best_cookie_data = min(active, key=lambda x: x['usage_count'])
+    best_cookie_data = active[0]
     
     cookie_value = best_cookie_data['value']
     cookies_dict = {}
@@ -683,7 +624,7 @@ def get_cookie_for_request():
     return cookies_dict
 
 def increment_cookie_usage(cookie_value, success=True):
-    """زيادة عداد استخدام الكوكيز"""
+    """تحديث استخدام الكوكيز"""
     cookies = load_cookies()
     
     if isinstance(cookie_value, dict):
@@ -698,7 +639,6 @@ def increment_cookie_usage(cookie_value, success=True):
         if isinstance(data, dict):
             stored_value = data.get("value", "")
             if stored_value == cookie_string:
-                data["usage_count"] = data.get("usage_count", 0) + 1
                 data["last_used"] = datetime.now().isoformat()
                 
                 if not success:
@@ -904,7 +844,6 @@ def create_course_detail_page(course_data, student_id):
     grade = course_data.get('Grade', '')
     total_degree = course_data.get('Degree', '')
     course_type = course_data.get('courseType', '').replace('|', ' - ')
-    course_status = course_data.get('CourseStatus', '')
     
     translated = grade_translation(grade)
     grade_ar = translated[0] if translated else grade
@@ -1362,10 +1301,10 @@ def format_transcript_data(transcript_data):
         """
         
         if 'StuSemesterData' in transcript_data:
-            for year_idx, year_data in enumerate(transcript_data['StuSemesterData']):
+            for year_data in transcript_data['StuSemesterData']:
                 acad_year = year_data.get('AcadYearName', 'سنة غير معروفة')
                 
-                for sem_idx, semester in enumerate(year_data.get('Semesters', [])):
+                for semester in year_data.get('Semesters', []):
                     sem_name = semester.get('SemesterName', 'فصل غير معروف')
                     full_name = f"{acad_year} - {sem_name}"
                     
@@ -1375,8 +1314,6 @@ def format_transcript_data(transcript_data):
                     curr_perc = semester.get('CurrPerc', '0')
                     reg_hours = semester.get('RegHrs', '0')
                     curr_ch = semester.get('CurrCH', '0')
-                    
-                    semester_status = semester.get('CourseStatus', '').strip()
                     
                     courses = semester.get('Courses', [])
                     
@@ -1424,7 +1361,6 @@ def format_transcript_data(transcript_data):
                         grade_display = translated[0] if translated else grade
                         grade_color = translated[2] if len(translated) > 2 else '#ffffff'
                         
-                        # إنشاء رابط للمادة
                         course_data_encoded = urllib.parse.quote(json.dumps(course))
                         
                         html += f"""
@@ -1610,7 +1546,6 @@ def index():
 def login():
     identifier = request.form.get('identifier')
     credential = request.form.get('credential')
-    user_ip = get_user_ip(request)
     
     if not identifier or not credential:
         return render_template_string(LOGIN_PAGE, error="الرجاء إدخال جميع البيانات", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
@@ -1624,17 +1559,15 @@ def login():
         session['is_admin'] = True
         session['student_id'] = "admin"
         session.permanent = True
-        set_user_data("admin", "admin", ADMIN_PASSWORD, user_ip)
+        set_user_data("admin", "admin", ADMIN_PASSWORD)
         return redirect(url_for('admin_panel'))
     
-    # التحقق من القائمة البيضاء للطلاب
     if not is_student_whitelisted(identifier):
         return render_template_string(LOGIN_PAGE, error="🚫 هذا الحساب غير مصرح له باستخدام النظام", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
     if is_banned_student_code(identifier):
         return render_template_string(LOGIN_PAGE, error="🚫 هذا الكود محظور ولا يمكن استخدامه", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    # التحقق من أكواد الوصول
     access_codes = load_access_codes()
     if credential in access_codes:
         student_id = identifier
@@ -1653,23 +1586,21 @@ def login():
             return render_template_string(LOGIN_PAGE, error="⚠️ لا توجد كوكيز متاحة - الرجاء إضافة كوكيز أولاً", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
         
         if code_data.get("single_use", False):
-            mark_code_as_used(access_code, student_id, user_ip)
+            mark_code_as_used(access_code, student_id)
         
         results = get_both_results_with_cookies(student_id, cookies_dict)
         
         if not results.get('success'):
             return render_template_string(LOGIN_PAGE, error="فشل في جلب النتيجة", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
         
-        set_user_data(f"access_{student_id}_{int(time.time())}", student_id, None, user_ip)
+        set_user_data(f"access_{student_id}_{int(time.time())}", student_id, None)
         
-        # حفظ النتائج في الجلسة
         session['student_id'] = student_id
         session['results'] = results
         session['settings'] = settings
         
         return redirect(url_for('show_result'))
     
-    # تسجيل دخول طالب عادي
     student_id = identifier
     password = credential
     
@@ -1681,9 +1612,7 @@ def login():
     if status != "SUCCESS":
         return render_template_string(LOGIN_PAGE, error="❌ بيانات دخول غير صحيحة", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    ban_result, ban_reason = check_and_ban_user(student_id, student_id, password, user_ip)
-    if ban_result:
-        return render_template_string(LOGIN_PAGE, error="🚫 تم حظر هذا الحساب", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
+    set_user_data(student_id, student_id, password)
     
     session['user_id'] = student_id
     session['student_id'] = student_id
@@ -1696,7 +1625,6 @@ def login():
     if results.get('grades_error'):
         return render_template_string(LOGIN_PAGE, error=results['grades_error'], dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
-    # حفظ النتائج في الجلسة
     session['results'] = results
     session['settings'] = settings
     
@@ -1796,13 +1724,9 @@ def admin_settings():
     
     if request.method == 'POST':
         settings = {
-            "single_code_per_user": request.form.get('single_code') == 'on',
-            "subscription_required": request.form.get('subscription') == 'on',
             "maintenance_mode": request.form.get('maintenance') == 'on',
-            "cookie_rotation": request.form.get('cookie_rotation') == 'on',
             "show_transcript": request.form.get('show_transcript') == 'on',
-            "transcript_only": request.form.get('transcript_only') == 'on',
-            "max_cookie_uses": int(request.form.get('max_cookie_uses', 50))
+            "transcript_only": request.form.get('transcript_only') == 'on'
         }
         save_settings(settings)
         return redirect(url_for('admin_panel'))
@@ -1829,10 +1753,7 @@ def toggle_auto_login_route():
     data = request.get_json()
     enabled = data.get('enabled')
     
-    # تحديث الإعدادات
     new_state = toggle_auto_login_state(enabled)
-    
-    # تحديث حالة session manager
     session_manager.set_auto_login_state(new_state)
     
     return jsonify({
@@ -3121,13 +3042,6 @@ SETTINGS_PAGE = '''
         }
         input:checked + .slider { background-color: #667eea; }
         input:checked + .slider:before { transform: translateX(26px); }
-        .number-input {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            text-align: center;
-        }
         .save-btn { 
             background: #28a745; 
             color: white; 
@@ -3227,9 +3141,6 @@ SETTINGS_PAGE = '''
                 align-items:center;
                 justify-content:space-between;
             }
-            .number-input{
-                width:80px;
-            }
             .header{
                 flex-direction:row;
                 justify-content:space-between;
@@ -3252,44 +3163,11 @@ SETTINGS_PAGE = '''
             <form method="POST">
                 <div class="setting-item">
                     <div class="setting-info">
-                        <h3>كود واحد لكل مستخدم</h3>
-                        <p>منع المستخدمين من استخدام أكثر من كود طالب (مع التحقق من IP)</p>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" name="single_code" {% if settings.single_code_per_user %}checked{% endif %}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <h3>إلزام الاشتراك</h3>
-                        <p>تطلب اشتراك القناة لاستخدام النظام</p>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" name="subscription" {% if settings.subscription_required %}checked{% endif %}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                
-                <div class="setting-item">
-                    <div class="setting-info">
                         <h3>وضع الصيانة</h3>
                         <p>تعطيل جميع الخدمات مؤقتاً</p>
                     </div>
                     <label class="toggle-switch">
                         <input type="checkbox" name="maintenance" {% if settings.maintenance_mode %}checked{% endif %}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <h3>تدوير الكوكيز</h3>
-                        <p>اختيار أفضل كوكيز متاحة تلقائياً</p>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" name="cookie_rotation" {% if settings.cookie_rotation %}checked{% endif %}>
                         <span class="slider"></span>
                     </label>
                 </div>
@@ -3314,14 +3192,6 @@ SETTINGS_PAGE = '''
                         <input type="checkbox" name="transcript_only" {% if settings.transcript_only %}checked{% endif %}>
                         <span class="slider"></span>
                     </label>
-                </div>
-                
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <h3>الحد الأقصى لاستخدام الكوكيز</h3>
-                        <p>عدد مرات استخدام كل كوكيز قبل إيقافها</p>
-                    </div>
-                    <input type="number" name="max_cookie_uses" class="number-input" value="{{ settings.max_cookie_uses or 50 }}" min="1" max="1000">
                 </div>
                 
                 <button type="submit" class="save-btn">💾 حفظ الإعدادات</button>
@@ -3513,10 +3383,6 @@ USERS_PAGE = '''
             padding: 2px 5px;
             border-radius: 3px;
         }
-        .ip-address {
-            font-family: monospace;
-            color: #17a2b8;
-        }
         .search-box {
             width: 100%;
             padding: 10px;
@@ -3627,7 +3493,6 @@ USERS_PAGE = '''
                         <th>معرف المستخدم</th>
                         <th>كود الطالب</th>
                         <th>كلمة المرور</th>
-                        <th>آخر IP</th>
                         <th>آخر ظهور</th>
                         <th>الإجراءات</th>
                     </tr>
@@ -3639,7 +3504,6 @@ USERS_PAGE = '''
                         <td>{{ user }}</td>
                         <td>{{ data.student_code if data.student_code else '—' }}</td>
                         <td><span class="password-mask">●●●●●●</span></td>
-                        <td class="ip-address">{{ data.last_ip if data.last_ip else '—' }}</td>
                         <td>{{ data.last_seen[:16] if data.last_seen else '—' }}</td>
                         <td>
                             <a href="/admin/user_details/{{ user }}" class="btn-info" target="_blank">عرض</a>
@@ -4114,7 +3978,6 @@ COOKIES_PAGE = '''
                         <th>userID</th>
                         <th>القيمة</th>
                         <th>الحالة</th>
-                        <th>الاستخدام</th>
                         <th>الإجراءات</th>
                     </tr>
                 </thead>
@@ -4127,7 +3990,6 @@ COOKIES_PAGE = '''
                         <td class="{{ 'active' if data.is_active else 'inactive' }}">
                             {{ 'نشط' if data.is_active else 'غير نشط' }}
                         </td>
-                        <td>{{ data.usage_count or 0 }}</td>
                         <td>
                             <form method="POST" style="display:inline;">
                                 <input type="hidden" name="action" value="toggle">
@@ -4383,16 +4245,6 @@ USER_DETAILS_PAGE = '''
             border-radius: 5px;
             display: inline-block;
         }
-        .ip-list {
-            list-style: none;
-        }
-        .ip-list li {
-            font-family: monospace;
-            background: #f8f9fa;
-            padding: 5px 10px;
-            margin: 5px 0;
-            border-radius: 5px;
-        }
         .dev-footer {
             text-align: center;
             margin-top: 20px;
@@ -4448,11 +4300,6 @@ USER_DETAILS_PAGE = '''
             </div>
             
             <div class="info-row">
-                <div class="info-label">آخر IP:</div>
-                <div class="info-value">{{ user_data.last_ip or '—' }}</div>
-            </div>
-            
-            <div class="info-row">
                 <div class="info-label">آخر ظهور:</div>
                 <div class="info-value">{{ user_data.last_seen or '—' }}</div>
             </div>
@@ -4460,21 +4307,6 @@ USER_DETAILS_PAGE = '''
             <div class="info-row">
                 <div class="info-label">آخر تحديث:</div>
                 <div class="info-value">{{ user_data.updated_at or '—' }}</div>
-            </div>
-            
-            <div class="info-row">
-                <div class="info-label">جميع عناوين IP:</div>
-                <div class="info-value">
-                    {% if user_data.ips and user_data.ips is iterable %}
-                        <ul class="ip-list">
-                        {% for ip in user_data.ips %}
-                            <li>{{ ip }}</li>
-                        {% endfor %}
-                        </ul>
-                    {% else %}
-                        لا توجد عناوين IP مسجلة
-                    {% endif %}
-                </div>
             </div>
         </div>
         
