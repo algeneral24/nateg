@@ -33,11 +33,7 @@ MEMORY_STORAGE = {
     "banned_student_codes": [],
     "access_codes": {},
     "settings": {
-        "single_code_per_user": True,
-        "subscription_required": True,
         "maintenance_mode": False,
-        "cookie_rotation": True,
-        "max_cookie_uses": 50,
         "show_transcript": True,
         "transcript_only": False
     },
@@ -416,11 +412,7 @@ def save_access_codes(codes):
 
 def load_settings():
     settings = load_json_file(SETTINGS_FILE, {
-        "single_code_per_user": True,
-        "subscription_required": True,
         "maintenance_mode": False,
-        "cookie_rotation": True,
-        "max_cookie_uses": 50,
         "show_transcript": True,
         "transcript_only": False
     })
@@ -474,22 +466,9 @@ def check_and_ban_user(user_id, student_code, password=None, ip_address=None):
     saved_password = user_data.get("password")
     saved_ips = user_data.get("ips", [])
     
-    settings = load_settings()
-    
     if not saved_code:
         set_user_data(user_id, student_code, password, ip_address)
         return False, "new_user"
-    
-    single_code_enabled = settings.get("single_code_per_user", True)
-    
-    if single_code_enabled:
-        if saved_ips and ip_address and ip_address not in saved_ips:
-            save_banned_user(user_id)
-            return True, "banned_different_ip"
-        
-        if saved_code != student_code:
-            save_banned_user(user_id)
-            return True, "banned_different_code"
     
     set_user_data(user_id, saved_code, None, ip_address)
     
@@ -519,6 +498,10 @@ def save_cookies(cookies_data):
 
 def add_cookie(cookie_value, description=""):
     cookies = load_cookies()
+    
+    # حذف جميع الكوكيز القديمة
+    cookies.clear()
+    
     cookie_id = hashlib.md5(f"{cookie_value}{time.time()}".encode()).hexdigest()[:8]
     
     user_id_value = extract_user_id_from_cookie(cookie_value)
@@ -552,19 +535,16 @@ def extract_user_id_from_cookie(cookie_string):
 
 def get_active_cookies():
     cookies = load_cookies()
-    settings = load_settings()
-    max_uses = settings.get("max_cookie_uses", 50)
     
     active = []
     for cid, data in cookies.items():
         if isinstance(data, dict) and data.get("is_active", True) and data.get("is_valid", True):
-            if data.get("usage_count", 0) < max_uses:
-                active.append({
-                    "id": cid, 
-                    "value": data["value"], 
-                    "description": data.get("description", ""),
-                    "usage_count": data.get("usage_count", 0)
-                })
+            active.append({
+                "id": cid, 
+                "value": data["value"], 
+                "description": data.get("description", ""),
+                "usage_count": data.get("usage_count", 0)
+            })
     return active
 
 def get_best_cookie():
@@ -1294,6 +1274,15 @@ def create_course_detail_page(course_data):
                 </div>
             </div>
         </div>
+        
+        <script>
+        // التأكد من عدم تخزين الصفحة في cache عند الرجوع
+        window.onpageshow = function(event) {{
+            if (event.persisted) {{
+                window.location.reload();
+            }}
+        }};
+        </script>
     </body>
     </html>
     '''
@@ -1750,13 +1739,9 @@ def admin_settings():
     
     if request.method == 'POST':
         settings = {
-            "single_code_per_user": request.form.get('single_code') == 'on',
-            "subscription_required": request.form.get('subscription') == 'on',
             "maintenance_mode": request.form.get('maintenance') == 'on',
-            "cookie_rotation": request.form.get('cookie_rotation') == 'on',
             "show_transcript": request.form.get('show_transcript') == 'on',
-            "transcript_only": request.form.get('transcript_only') == 'on',
-            "max_cookie_uses": int(request.form.get('max_cookie_uses', 50))
+            "transcript_only": request.form.get('transcript_only') == 'on'
         }
         save_settings(settings)
         return redirect(url_for('admin_panel'))
@@ -3128,13 +3113,6 @@ SETTINGS_PAGE = '''
         }
         input:checked + .slider { background-color: #667eea; }
         input:checked + .slider:before { transform: translateX(26px); }
-        .number-input {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            text-align: center;
-        }
         .save-btn { 
             background: #28a745; 
             color: white; 
@@ -3234,9 +3212,6 @@ SETTINGS_PAGE = '''
                 align-items:center;
                 justify-content:space-between;
             }
-            .number-input{
-                width:80px;
-            }
             .header{
                 flex-direction:row;
                 justify-content:space-between;
@@ -3259,44 +3234,11 @@ SETTINGS_PAGE = '''
             <form method="POST">
                 <div class="setting-item">
                     <div class="setting-info">
-                        <h3>كود واحد لكل مستخدم</h3>
-                        <p>منع المستخدمين من استخدام أكثر من كود طالب (مع التحقق من IP)</p>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" name="single_code" {% if settings.single_code_per_user %}checked{% endif %}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <h3>إلزام الاشتراك</h3>
-                        <p>تطلب اشتراك القناة لاستخدام النظام</p>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" name="subscription" {% if settings.subscription_required %}checked{% endif %}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                
-                <div class="setting-item">
-                    <div class="setting-info">
                         <h3>وضع الصيانة</h3>
                         <p>تعطيل جميع الخدمات مؤقتاً</p>
                     </div>
                     <label class="toggle-switch">
                         <input type="checkbox" name="maintenance" {% if settings.maintenance_mode %}checked{% endif %}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <h3>تدوير الكوكيز</h3>
-                        <p>اختيار أفضل كوكيز متاحة تلقائياً</p>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" name="cookie_rotation" {% if settings.cookie_rotation %}checked{% endif %}>
                         <span class="slider"></span>
                     </label>
                 </div>
@@ -3321,14 +3263,6 @@ SETTINGS_PAGE = '''
                         <input type="checkbox" name="transcript_only" {% if settings.transcript_only %}checked{% endif %}>
                         <span class="slider"></span>
                     </label>
-                </div>
-                
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <h3>الحد الأقصى لاستخدام الكوكيز</h3>
-                        <p>عدد مرات استخدام كل كوكيز قبل إيقافها</p>
-                    </div>
-                    <input type="number" name="max_cookie_uses" class="number-input" value="{{ settings.max_cookie_uses or 50 }}" min="1" max="1000">
                 </div>
                 
                 <button type="submit" class="save-btn">💾 حفظ الإعدادات</button>
