@@ -28,7 +28,6 @@ DB_NAME = os.environ.get('DB_NAME', "university_system")
 # ========== محاولة الاتصال بـ MongoDB مع إعدادات SSL محسنة ==========
 MONGO_CONNECTED = False
 db = None
-collections = {}
 
 if MONGO_AVAILABLE:
     try:
@@ -36,8 +35,8 @@ if MONGO_AVAILABLE:
         client = MongoClient(
             MONGODB_URI,
             tlsCAFile=certifi.where(),
-            tlsAllowInvalidCertificates=True,  # السماح بالشهادات غير الصالحة مؤقتاً
-            serverSelectionTimeoutMS=5000,      # مهلة 5 ثواني فقط
+            tlsAllowInvalidCertificates=True,
+            serverSelectionTimeoutMS=5000,
             connectTimeoutMS=5000,
             socketTimeoutMS=5000,
             retryWrites=True,
@@ -49,6 +48,19 @@ if MONGO_AVAILABLE:
         db = client[DB_NAME]
         MONGO_CONNECTED = True
         print("✅ تم الاتصال بـ MongoDB بنجاح")
+        
+        # إنشاء الفهارس إذا كانت المجموعات موجودة
+        try:
+            db["student_codes"].create_index("user_id", unique=True)
+            db["banned_users"].create_index("user_id", unique=True)
+            db["banned_student_codes"].create_index("code", unique=True)
+            db["access_codes"].create_index("code", unique=True)
+            db["cookies"].create_index("cookie_id", unique=True)
+            db["cookies"].create_index("added_at")
+            db["student_whitelist"].create_index("code", unique=True)
+            print("✅ تم إنشاء الفهارس بنجاح")
+        except Exception as e:
+            print(f"⚠️ خطأ في إنشاء الفهارس: {e}")
         
     except Exception as e:
         print(f"❌ فشل الاتصال بـ MongoDB: {e}")
@@ -101,8 +113,139 @@ MEMORY_STORAGE = {
         "refresh_interval": 50,
         "last_run": None
     },
-    "session_manager_sessions": {}
+    "session_manager_sessions": {},
+    "cookie_creation_enabled": False,
+    "last_cookie_creation": None
 }
+
+# ========== متغيرات التحكم في الكوكيز ==========
+COOKIE_CREATION_ENABLED = False
+last_cookie_creation = None
+
+def toggle_cookie_creation(enabled=None):
+    """تشغيل أو إيقاف إنشاء الكوكيز التلقائي"""
+    global COOKIE_CREATION_ENABLED, last_cookie_creation
+    if enabled is not None:
+        COOKIE_CREATION_ENABLED = enabled
+    else:
+        COOKIE_CREATION_ENABLED = not COOKIE_CREATION_ENABLED
+    
+    MEMORY_STORAGE["cookie_creation_enabled"] = COOKIE_CREATION_ENABLED
+    
+    if COOKIE_CREATION_ENABLED:
+        last_cookie_creation = datetime.now()
+        MEMORY_STORAGE["last_cookie_creation"] = last_cookie_creation.isoformat() if last_cookie_creation else None
+        print("✅ تم تفعيل إنشاء الكوكيز التلقائي")
+        # إنشاء كوكيز فوراً عند التفعيل
+        create_new_cookies()
+    else:
+        print("⏸️ تم إيقاف إنشاء الكوكيز التلقائي")
+    
+    return COOKIE_CREATION_ENABLED
+
+def create_new_cookies():
+    """إنشاء كوكيز جديدة من حسابات الجلسات"""
+    global last_cookie_creation
+    if not COOKIE_CREATION_ENABLED:
+        print("⚠️ إنشاء الكوكيز التلقائي معطل")
+        return False
+    
+    print("🔄 جاري إنشاء كوكيز جديدة...")
+    created_count = 0
+    
+    for i, account in enumerate(SESSION_ACCOUNTS):
+        if account.get('active', False):
+            result = session_manager.login_account(account['username'], account['password'])
+            if result['success']:
+                cookie_id = add_cookie(result['cookie_string'], f"جلسة تلقائية - {account['username']}")
+                print(f"✅ تم إنشاء كوكيز جديدة للحساب {account['username']} - ID: {cookie_id}")
+                created_count += 1
+            else:
+                print(f"❌ فشل إنشاء كوكيز للحساب {account['username']}: {result.get('error')}")
+    
+    last_cookie_creation = datetime.now()
+    MEMORY_STORAGE["last_cookie_creation"] = last_cookie_creation.isoformat()
+    
+    print(f"✅ تم إنشاء {created_count} كوكيز جديدة بنجاح")
+    return created_count > 0
+
+def cleanup_old_cookies():
+    """حذف الكوكيز القديمة والاحتفاظ بالجديدة فقط"""
+    try:
+        # الاحتفاظ فقط بالكوكيز التي تم إنشاؤها في آخر ساعتين
+        two_hours_ago = datetime.now() - timedelta(hours=2)
+        
+        if MONGO_CONNECTED:
+            collection = db["cookies"]
+            # حذف الكوكيز الأقدم من ساعتين
+            result = collection.delete_many({
+                "added_at": {"$lt": two_hours_ago.isoformat()}
+            })
+            deleted_count = result.deleted_count
+            
+            # التحقق من وجود كوكيز حديثة
+            recent_cookies = collection.count_documents({
+                "added_at": {"$gte": two_hours_ago.isoformat()}
+            })
+            
+            print(f"🧹 تم حذف {deleted_count} كوكيز قديمة من MongoDB")
+            print(f"📊 يوجد {recent_cookies} كوكيز حديثة")
+            
+            # إذا لم يكن هناك كوكيز حديثة وكان التفعيل مفعل، قم بإنشاء جديدة
+            if recent_cookies == 0 and COOKIE_CREATION_ENABLED:
+                print("⚠️ لا توجد كوكيز حديثة، جاري إنشاء جديدة...")
+                create_new_cookies()
+        else:
+            cookies = MEMORY_STORAGE.get("cookies", {})
+            to_delete = []
+            recent_count = 0
+            
+            for cid, data in cookies.items():
+                added_at = data.get("added_at")
+                if added_at:
+                    try:
+                        added_date = datetime.fromisoformat(added_at)
+                        if added_date < two_hours_ago:
+                            to_delete.append(cid)
+                        else:
+                            recent_count += 1
+                    except:
+                        to_delete.append(cid)
+            
+            for cid in to_delete:
+                del cookies[cid]
+            
+            print(f"🧹 تم حذف {len(to_delete)} كوكيز قديمة من الذاكرة")
+            print(f"📊 يوجد {recent_count} كوكيز حديثة")
+            
+            if recent_count == 0 and COOKIE_CREATION_ENABLED:
+                print("⚠️ لا توجد كوكيز حديثة، جاري إنشاء جديدة...")
+                create_new_cookies()
+                
+    except Exception as e:
+        print(f"خطأ في تنظيف الكوكيز: {e}")
+
+def cookie_creation_scheduler():
+    """جدولة إنشاء الكوكيز كل 50 دقيقة"""
+    while True:
+        if COOKIE_CREATION_ENABLED:
+            # انتظر 50 دقيقة
+            time.sleep(3000)  # 50 دقيقة = 3000 ثانية
+            print("⏰ حان وقت إنشاء كوكيز جديدة (كل 50 دقيقة)")
+            create_new_cookies()
+        else:
+            time.sleep(60)  # انتظر دقيقة ثم تحقق مرة أخرى
+
+def cleanup_scheduler():
+    """جدولة تنظيف الكوكيز كل ساعتين"""
+    while True:
+        time.sleep(7200)  # ساعتين = 7200 ثانية
+        print("⏰ حان وقت تنظيف الكوكيز القديمة (كل ساعتين)")
+        cleanup_old_cookies()
+
+# تشغيل المجدولين
+threading.Thread(target=cleanup_scheduler, daemon=True).start()
+threading.Thread(target=cookie_creation_scheduler, daemon=True).start()
 
 # ========== دوال مساعدة للتعامل مع MongoDB أو الذاكرة ==========
 def get_collection(collection_name):
@@ -513,8 +656,6 @@ class SessionManager:
         self.refresh_interval = 50
         self.lock = threading.Lock()
         self.auto_login_enabled = False
-        self.refresh_thread = None
-        self.stop_refresh = False
         self.load_sessions()
     
     def load_sessions(self):
@@ -746,6 +887,7 @@ def add_cookie(cookie_value, description=""):
         "is_valid": True
     }
     save_cookies(cookies)
+    print(f"🍪 تم إضافة كوكيز جديدة - ID: {cookie_id}, User: {user_id_value}")
     return cookie_id
 
 def extract_user_id_from_cookie(cookie_string):
@@ -772,8 +914,12 @@ def get_active_cookies():
             active.append({
                 "id": cid, 
                 "value": data["value"], 
-                "description": data.get("description", "")
+                "description": data.get("description", ""),
+                "added_at": data.get("added_at", "")
             })
+    
+    # ترتيب الكوكيز حسب الأحدث أولاً
+    active.sort(key=lambda x: x.get("added_at", ""), reverse=True)
     return active
 
 def get_best_cookie():
@@ -833,49 +979,12 @@ def increment_cookie_usage(cookie_value, success=True):
                     data["error_count"] = data.get("error_count", 0) + 1
                     if data.get("error_count", 0) >= 3:
                         data["is_valid"] = False
+                        print(f"⚠️ تم تعطيل كوكيز {cid} بسبب كثرة الأخطاء")
                 else:
                     data["error_count"] = 0
                 
                 save_cookies(cookies)
                 break
-
-def cleanup_old_cookies():
-    """حذف الكوكيز التي لم تستخدم لأكثر من ساعة"""
-    try:
-        one_hour_ago = datetime.now() - timedelta(hours=1)
-        
-        if MONGO_CONNECTED:
-            collection = db["cookies"]
-            result = collection.delete_many({
-                "last_used": {"$lt": one_hour_ago.isoformat()}
-            })
-            print(f"🧹 تم حذف {result.deleted_count} كوكيز قديمة من MongoDB")
-        else:
-            cookies = MEMORY_STORAGE.get("cookies", {})
-            to_delete = []
-            for cid, data in cookies.items():
-                last_used = data.get("last_used")
-                if last_used and last_used < one_hour_ago.isoformat():
-                    to_delete.append(cid)
-            
-            for cid in to_delete:
-                del cookies[cid]
-            
-            print(f"🧹 تم حذف {len(to_delete)} كوكيز قديمة من الذاكرة")
-    except Exception as e:
-        print(f"خطأ في تنظيف الكوكيز: {e}")
-
-# تشغيل مهمة التنظيف كل ساعة
-def start_cleanup_scheduler():
-    def run_cleanup():
-        while True:
-            time.sleep(3600)  # ساعة
-            cleanup_old_cookies()
-    
-    thread = threading.Thread(target=run_cleanup, daemon=True)
-    thread.start()
-
-start_cleanup_scheduler()
 
 # ========== دوال جلب البيانات من الجامعة ==========
 def get_student_transcript_with_cookies(student_id, cookies_dict):
@@ -1825,8 +1934,10 @@ def login():
         session['results'] = results
         session['settings'] = settings
         
+        print(f"✅ تسجيل دخول ناجح باستخدام كود وصول - الطالب: {student_id}")
         return redirect(url_for('show_result'))
     
+    # تسجيل دخول طالب عادي
     student_id = identifier
     password = credential
     
@@ -1845,6 +1956,8 @@ def login():
     session.permanent = True
     
     cookies_dict = get_cookie_for_request()
+    if not cookies_dict:
+        return render_template_string(LOGIN_PAGE, error="⚠️ لا توجد كوكيز متاحة - الرجاء إضافة كوكيز أولاً", dev_link=DEV_TELEGRAM_LINK, dev_name=DEV_TELEGRAM)
     
     results = get_both_results_with_cookies(student_id, cookies_dict)
     
@@ -1854,17 +1967,21 @@ def login():
     session['results'] = results
     session['settings'] = settings
     
+    print(f"✅ تسجيل دخول ناجح - الطالب: {student_id}")
     return redirect(url_for('show_result'))
 
 @app.route('/result')
 def show_result():
     """عرض صفحة النتائج المحفوظة في الجلسة"""
     if 'student_id' not in session or 'results' not in session:
+        print("⚠️ محاولة الوصول إلى النتائج بدون جلسة صالحة")
         return redirect(url_for('index'))
     
     results = session.get('results', {})
     settings = session.get('settings', load_settings())
     student_id = session.get('student_id')
+    
+    print(f"📊 عرض نتائج الطالب: {student_id}")
     
     transcript_html = ""
     grades_html = ""
@@ -1890,6 +2007,7 @@ def show_result():
 def show_result_with_id(student_id):
     """عرض صفحة النتائج المحفوظة في الجلسة (للرجوع من التفاصيل)"""
     if 'student_id' not in session or 'results' not in session or session.get('student_id') != student_id:
+        print(f"⚠️ محاولة الوصول إلى نتائج طالب {student_id} بدون جلسة صالحة")
         return redirect(url_for('index'))
     
     results = session.get('results', {})
@@ -1919,19 +2037,23 @@ def show_result_with_id(student_id):
 def course_details(student_id, course_data):
     """صفحة تفاصيل المقرر"""
     if 'student_id' not in session or session.get('student_id') != student_id:
+        print(f"⚠️ محاولة الوصول إلى تفاصيل مقرر لطالب {student_id} بدون جلسة صالحة")
         return redirect(url_for('index'))
     
     try:
         course_data_decoded = urllib.parse.unquote(course_data)
         course_info = json.loads(course_data_decoded)
         
+        print(f"📚 عرض تفاصيل مقرر للطالب: {student_id}")
         html = create_course_detail_page(course_info, student_id)
         return html
     except Exception as e:
+        print(f"❌ خطأ في عرض تفاصيل المقرر: {e}")
         return f"<div style='color: red; padding: 20px;'>خطأ في عرض تفاصيل المقرر: {str(e)}</div>"
 
 @app.route('/logout')
 def logout():
+    print(f"🚪 تسجيل خروج: {session.get('student_id', 'غير معروف')}")
     session.clear()
     return redirect(url_for('index'))
 
@@ -1969,6 +2091,36 @@ def admin_settings():
                                  auto_login_settings=auto_login_settings,
                                  dev_link=DEV_TELEGRAM_LINK, 
                                  dev_name=DEV_TELEGRAM)
+
+@app.route('/admin/toggle_cookie_creation', methods=['POST'])
+def toggle_cookie_creation_route():
+    """تشغيل أو إيقاف إنشاء الكوكيز التلقائي"""
+    if 'is_admin' not in session:
+        return jsonify({'error': 'غير مصرح'}), 403
+    
+    data = request.get_json()
+    enabled = data.get('enabled')
+    
+    new_state = toggle_cookie_creation(enabled)
+    
+    return jsonify({
+        'success': True, 
+        'enabled': new_state,
+        'message': 'تم تفعيل إنشاء الكوكيز التلقائي' if new_state else 'تم إيقاف إنشاء الكوكيز التلقائي'
+    })
+
+@app.route('/admin/create_cookies_now', methods=['POST'])
+def create_cookies_now_route():
+    """إنشاء كوكيز جديدة فوراً"""
+    if 'is_admin' not in session:
+        return jsonify({'error': 'غير مصرح'}), 403
+    
+    success = create_new_cookies()
+    
+    return jsonify({
+        'success': success,
+        'message': 'تم إنشاء كوكيز جديدة بنجاح' if success else 'فشل إنشاء كوكيز جديدة'
+    })
 
 @app.route('/admin/toggle_auto_login', methods=['POST'])
 def toggle_auto_login_route():
@@ -2186,6 +2338,8 @@ def admin_cookies():
                                  cookies=cookies, 
                                  sessions=session_info,
                                  auto_login_settings=auto_login_settings,
+                                 cookie_creation_enabled=COOKIE_CREATION_ENABLED,
+                                 last_cookie_creation=MEMORY_STORAGE.get("last_cookie_creation"),
                                  dev_link=DEV_TELEGRAM_LINK, 
                                  dev_name=DEV_TELEGRAM)
 
@@ -4145,6 +4299,78 @@ COOKIES_PAGE = '''
             font-size: 13px;
             color: #333;
         }
+        
+        .cookie-creation-control {
+            background: #fff3cd;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .cookie-creation-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .cookie-creation-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #856404;
+        }
+        .cookie-creation-status {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .status-enabled {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status-disabled {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .cookie-creation-toggle {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .cookie-toggle-btn {
+            padding: 10px 25px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .cookie-toggle-btn.on {
+            background: #28a745;
+            color: white;
+        }
+        .cookie-toggle-btn.on:hover {
+            background: #218838;
+        }
+        .cookie-toggle-btn.off {
+            background: #dc3545;
+            color: white;
+        }
+        .cookie-toggle-btn.off:hover {
+            background: #c82333;
+        }
+        .cookie-info {
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #333;
+        }
+        
         .dev-footer {
             text-align: center;
             margin-top: 20px;
@@ -4174,6 +4400,9 @@ COOKIES_PAGE = '''
             .auto-login-header {
                 flex-direction: row;
             }
+            .cookie-creation-header {
+                flex-direction: row;
+            }
         }
     </style>
 </head>
@@ -4182,6 +4411,32 @@ COOKIES_PAGE = '''
         <div class="header">
             <h1>🍪 إدارة الكوكيز والجلسات</h1>
             <a href="/admin" class="back-btn">رجوع</a>
+        </div>
+        
+        <div class="cookie-creation-control">
+            <div class="cookie-creation-header">
+                <div>
+                    <span class="cookie-creation-title">🤖 إنشاء الكوكيز التلقائي</span>
+                    <span class="cookie-creation-status {% if cookie_creation_enabled %}status-enabled{% else %}status-disabled{% endif %}">
+                        {% if cookie_creation_enabled %}🟢 مفعل{% else %}🔴 معطل{% endif %}
+                    </span>
+                </div>
+                <div class="cookie-creation-toggle">
+                    {% if cookie_creation_enabled %}
+                        <button class="cookie-toggle-btn off" onclick="toggleCookieCreation(false)">⏸️ إيقاف</button>
+                    {% else %}
+                        <button class="cookie-toggle-btn on" onclick="toggleCookieCreation(true)">▶️ تشغيل</button>
+                    {% endif %}
+                    <button class="btn-success" onclick="createCookiesNow()">⚡ إنشاء الآن</button>
+                </div>
+            </div>
+            <div class="cookie-info">
+                <div>🔄 يتم إنشاء كوكيز جديدة كل 50 دقيقة</div>
+                <div>🧹 يتم حذف الكوكيز القديمة كل ساعتين (تبقى فقط الكوكيز الحديثة)</div>
+                {% if last_cookie_creation %}
+                <div>🕐 آخر إنشاء: {{ last_cookie_creation[:16] }}</div>
+                {% endif %}
+            </div>
         </div>
         
         <div class="auto-login-control">
@@ -4245,7 +4500,7 @@ COOKIES_PAGE = '''
         </div>
         
         <div class="card">
-            <h2>➕ إضافة كوكيز جديدة</h2>
+            <h2>➕ إضافة كوكيز جديدة يدوياً</h2>
             <form method="POST" class="input-group">
                 <input type="hidden" name="action" value="add">
                 <textarea name="cookie_value" placeholder="userID=xxx;sessionDateTime=yyy" required></textarea>
@@ -4262,6 +4517,7 @@ COOKIES_PAGE = '''
                         <th>الوصف</th>
                         <th>userID</th>
                         <th>القيمة</th>
+                        <th>تاريخ الإضافة</th>
                         <th>الحالة</th>
                         <th>الإجراءات</th>
                     </tr>
@@ -4272,6 +4528,7 @@ COOKIES_PAGE = '''
                         <td>{{ data.description or '—' }}</td>
                         <td>{{ data.user_id or '—' }}</td>
                         <td class="cookie-value" title="{{ data.value }}">{{ data.value[:20] }}...</td>
+                        <td>{{ data.added_at[:16] if data.added_at else '—' }}</td>
                         <td class="{{ 'active' if data.is_active else 'inactive' }}">
                             {{ 'نشط' if data.is_active else 'غير نشط' }}
                         </td>
@@ -4312,6 +4569,42 @@ COOKIES_PAGE = '''
             if(data.success) {
                 alert(data.message);
                 location.reload();
+            }
+        });
+    }
+    
+    function toggleCookieCreation(enabled) {
+        fetch('/admin/toggle_cookie_creation', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({enabled: enabled})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if(data.success) {
+                alert(data.message);
+                location.reload();
+            }
+        });
+    }
+    
+    function createCookiesNow() {
+        fetch('/admin/create_cookies_now', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({})
+        })
+        .then(response => response.json())
+        .then(data => {
+            if(data.success) {
+                alert(data.message);
+                location.reload();
+            } else {
+                alert('فشل إنشاء الكوكيز: ' + data.message);
             }
         });
     }
