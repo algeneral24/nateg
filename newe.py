@@ -27,8 +27,6 @@ DATA_URL = f"{BASE_URL}/getJCI"
 # ========== استخدام التخزين المؤقت في الذاكرة ==========
 # ملاحظة: هذا التخزين مؤقت وسيختفي عند إعادة تشغيل التطبيق على Vercel
 # يفضل استخدام قاعدة بيانات خارجية مثل MongoDB Atlas أو Supabase للتخزين الدائم
-# ========== دوال مساعدة للتخزين في الذاكرة ==========
-# ملاحظة: على Vercel، كل شيء في الذاكرة مؤقت
 MEMORY_STORAGE = {
     "student_codes": {},
     "banned_users": set(),
@@ -49,14 +47,41 @@ MEMORY_STORAGE = {
     "student_whitelist": set(),
     "whitelist_mode": {"enabled": False, "filename": "student_whitelist.txt"},
     "auto_login_settings": {
-        "enabled": False,
+        "enabled": False,  # معطل افتراضياً على Vercel
         "refresh_interval": 50,
         "last_run": None
     },
     "session_manager_sessions": {}
 }
 
-# تعريف أسماء الملفات (للت
+# تعريف أسماء الملفات (للتوافق مع الكود القديم)
+STUDENT_CODES_FILE = "student_codes.json"
+BANNED_USERS_FILE = "banned_users.txt"
+BANNED_STUDENT_CODES_FILE = "banned_student_codes.json"
+ACCESS_CODES_FILE = "access_codes.json"
+SETTINGS_FILE = "settings.json"
+WHITELIST_FILE = "whitelist.json"
+COOKIES_FILE = "cookies.json"
+SESSIONS_FILE = "active_sessions.json"
+STUDENT_WHITELIST_FILE = "student_whitelist.txt"
+STUDENT_WHITELIST_MODE_FILE = "whitelist_mode.json"
+AUTO_LOGIN_SETTINGS_FILE = "auto_login_settings.json"
+
+# ========== بيانات الأدمن والمطور ==========
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin123"
+DEV_TELEGRAM = "𓆩⋆ ׅᎯ𝔹Ꮇ ׅ⋆𓆪"
+DEV_TELEGRAM_LINK = "https://t.me/BO_R0"
+
+# ========== حساب الجلسات الدائمة ==========
+SESSION_ACCOUNTS = [
+    {
+        "username": "81691006",
+        "password": "iOUy651!",
+        "active": True
+    },
+]
+
 # ========== إعدادات التسجيل التلقائي ==========
 def load_auto_login_settings():
     """تحميل إعدادات التسجيل التلقائي"""
@@ -2069,20 +2094,8 @@ def remove_banned_student_code(code):
     return False
 
 # ========== صفحات HTML ==========
-# (ملاحظة: سيتم تضمين صفحات HTML كاملة هنا كما في الكود الأصلي)
-# نظراً لأن صفحات HTML طويلة جداً، سأضعها مختصرة هنا
-# لكن يجب نسخها كاملة من ملف newe.py الأصلي
+# (جميع صفحات HTML موجودة هنا مرة واحدة فقط)
 
-LOGIN_PAGE = '''(نفس المحتوى الأصلي)'''
-RESULT_PAGE = '''(نفس المحتوى الأصلي)'''
-ADMIN_PAGE = '''(نفس المحتوى الأصلي)'''
-SETTINGS_PAGE = '''(نفس المحتوى الأصلي)'''
-USERS_PAGE = '''(نفس المحتوى الأصلي)'''
-BANNED_CODES_PAGE = '''(نفس المحتوى الأصلي)'''
-COOKIES_PAGE = '''(نفس المحتوى الأصلي)'''
-ACCESS_CODES_PAGE = '''(نفس المحتوى الأصلي)'''
-USER_DETAILS_PAGE = '''(نفس المحتوى الأصلي)'''
-# ========== صفحات HTML ==========
 LOGIN_PAGE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -4479,5 +4492,6 @@ USER_DETAILS_PAGE = '''
 </body>
 </html>
 '''
+
 # ========== هذا المتغير مطلوب لـ Vercel ==========
 # Vercel سيبحث عن متغير باسم 'app'
